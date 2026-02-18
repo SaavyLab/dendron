@@ -1,0 +1,160 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Geist", system-ui, -apple-system, sans-serif;
+  --font-mono: "Geist Mono", "JetBrains Mono", ui-monospace, monospace;
+}
+
+/* ─── Design tokens ──────────────────────────────────────── */
+:root {
+  /* Backgrounds */
+  --bg-base:     #0c0c0e;
+  --bg-surface:  #111115;
+  --bg-elevated: #18181d;
+  --bg-overlay:  #1e1e24;
+
+  /* Borders */
+  --border:        #222228;
+  --border-subtle: #1a1a1f;
+  --border-strong: #2e2e38;
+
+  /* Text */
+  --text-primary:   #f0f0f2;
+  --text-secondary: #8b8b9a;
+  --text-muted:     #4a4a58;
+
+  /* Accent */
+  --accent:       #60a5fa;
+  --accent-dim:   #3b82f6;
+  --accent-muted: rgba(96, 165, 250, 0.1);
+
+  /* Status */
+  --success: #4ade80;
+  --warning: #fb923c;
+  --error:   #f87171;
+
+  /* Layout */
+  --sidebar-width:    240px;
+  --tabbar-height:    36px;
+  --toolbar-height:   32px;
+  --statusbar-height: 22px;
+}
+
+/* ─── Reset ───────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; }
+
+html, body, #root {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: var(--bg-base);
+  color: var(--text-primary);
+  font-size: 13px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  user-select: none;
+}
+
+/* ─── Scrollbars ───────────────────────────────────────────── */
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #2e2e38; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #3f3f50; }
+::-webkit-scrollbar-corner { background: transparent; }
+
+/* ─── Utilities ───────────────────────────────────────────── */
+.selectable { user-select: text; }
+
+:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+
+input, textarea, select {
+  font-family: inherit;
+  font-size: inherit;
+  color: inherit;
+  background: transparent;
+  border: none;
+  outline: none;
+}
+
+/* ─── CodeMirror overrides ────────────────────────────────── */
+.cm-editor {
+  height: 100%;
+  font-size: 13px;
+  background: transparent !important;
+}
+
+.cm-editor.cm-focused { outline: none !important; }
+
+.cm-scroller { overflow: auto !important; }
+
+.cm-content {
+  padding: 8px 0;
+  caret-color: var(--accent);
+  font-family: "Geist Mono", "JetBrains Mono", ui-monospace, monospace !important;
+}
+
+.cm-gutters {
+  background: var(--bg-surface) !important;
+  border-right: 1px solid var(--border) !important;
+  color: var(--text-muted) !important;
+  min-width: 44px;
+  font-family: "Geist Mono", ui-monospace, monospace;
+  font-size: 12px;
+  user-select: none;
+}
+
+.cm-lineNumbers .cm-gutterElement { padding: 0 8px 0 4px; }
+
+.cm-activeLine      { background: rgba(255, 255, 255, 0.02) !important; }
+.cm-activeLineGutter {
+  background: rgba(255, 255, 255, 0.035) !important;
+  color: var(--text-secondary) !important;
+}
+
+.cm-cursor, .cm-dropCursor {
+  border-left: 2px solid var(--accent) !important;
+}
+
+.cm-selectionBackground,
+.cm-focused .cm-selectionBackground {
+  background: rgba(96, 165, 250, 0.16) !important;
+}
+
+/* Autocomplete tooltip */
+.cm-tooltip {
+  background: var(--bg-elevated) !important;
+  border: 1px solid var(--border-strong) !important;
+  border-radius: 6px !important;
+  overflow: hidden;
+}
+
+.cm-tooltip.cm-tooltip-autocomplete > ul > li {
+  padding: 3px 10px !important;
+  color: var(--text-secondary) !important;
+  font-family: "Geist Mono", monospace;
+  font-size: 12px;
+}
+
+.cm-tooltip.cm-tooltip-autocomplete > ul > li[aria-selected] {
+  background: var(--accent-muted) !important;
+  color: var(--accent) !important;
+}
+
+/* ─── Animations ──────────────────────────────────────────── */
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.3; }
+}

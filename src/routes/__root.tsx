@@ -1,0 +1,231 @@
+import { useState, useRef, useCallback, useEffect } from "react";
+import { createRootRoute, Outlet } from "@tanstack/react-router";
+import { WorkspaceContext, type WorkspaceContextValue } from "@/lib/WorkspaceContext";
+import type { Tab } from "@/lib/types";
+import { api } from "@/lib/tauri";
+import { TabBar } from "@/components/TabBar";
+import { ConnectionSidebar } from "@/components/ConnectionSidebar";
+import { QueryEditor, type QueryEditorHandle } from "@/components/QueryEditor";
+import { ResultsTable } from "@/components/ResultsTable";
+import { StatusBar } from "@/components/StatusBar";
+import { ConnectionDialog } from "@/components/ConnectionDialog";
+
+let nextId = 2;
+
+function RootLayout() {
+  const [tabs, setTabs] = useState<Tab[]>([
+    {
+      id: 1,
+      label: "Query 1",
+      sql: "",
+      connectionName: null,
+      result: null,
+      error: null,
+      isRunning: false,
+    },
+  ]);
+  const [activeTabId, setActiveTabId] = useState(1);
+  const [showConnectionDialog, setShowConnectionDialog] = useState(false);
+  const editorRef = useRef<QueryEditorHandle | null>(null);
+
+  const activeTab = tabs.find((t) => t.id === activeTabId) ?? tabs[0];
+
+  const updateTab = useCallback((id: number, updates: Partial<Tab>) => {
+    setTabs((prev) => prev.map((t) => (t.id === id ? { ...t, ...updates } : t)));
+  }, []);
+
+  const addTab = useCallback(() => {
+    const id = nextId++;
+    setTabs((prev) => [
+      ...prev,
+      {
+        id,
+        label: `Query ${id}`,
+        sql: "",
+        connectionName: null,
+        result: null,
+        error: null,
+        isRunning: false,
+      },
+    ]);
+    setActiveTabId(id);
+  }, []);
+
+  const closeTab = useCallback(
+    (id: number) => {
+      setTabs((prev) => {
+        if (prev.length === 1) return prev;
+        const idx = prev.findIndex((t) => t.id === id);
+        const next = prev.filter((t) => t.id !== id);
+        if (id === activeTabId) {
+          setActiveTabId(next[Math.max(0, Math.min(idx, next.length - 1))].id);
+        }
+        return next;
+      });
+    },
+    [activeTabId]
+  );
+
+  const closeActiveTab = useCallback(() => closeTab(activeTabId), [activeTabId, closeTab]);
+
+  const runActiveQuery = useCallback(async () => {
+    const tab = tabs.find((t) => t.id === activeTabId);
+    if (!tab) return;
+
+    if (!tab.connectionName) {
+      updateTab(tab.id, {
+        error: "No connection selected. Click a connection in the sidebar to connect.",
+      });
+      return;
+    }
+
+    if (!tab.sql.trim()) return;
+
+    // Safety check
+    try {
+      const safety = await api.queries.checkSafety(tab.sql, tab.id);
+      if (safety.requires_confirmation) {
+        const msg = safety.warning_message ?? "This query may modify or delete data.";
+        if (!window.confirm(`${msg}\n\nContinue?`)) return;
+      }
+    } catch {
+      // If safety check fails, proceed anyway
+    }
+
+    updateTab(tab.id, { isRunning: true, error: null, result: null });
+
+    try {
+      const result = await api.queries.execute(tab.id, tab.sql);
+      await api.queries.addHistory(tab.sql).catch(() => {});
+      updateTab(tab.id, { result, isRunning: false });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      updateTab(tab.id, { error: msg, isRunning: false });
+    }
+  }, [tabs, activeTabId, updateTab]);
+
+  const cancelActiveQuery = useCallback(() => {
+    const tab = tabs.find((t) => t.id === activeTabId);
+    if (!tab) return;
+    api.queries.cancel(tab.id).catch(() => {});
+    updateTab(tab.id, { isRunning: false });
+  }, [tabs, activeTabId, updateTab]);
+
+  const insertSql = useCallback(
+    (sql: string) => {
+      updateTab(activeTabId, { sql });
+      editorRef.current?.setValue(sql);
+    },
+    [activeTabId, updateTab]
+  );
+
+  // Global keyboard shortcuts
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      const mod = e.ctrlKey || e.metaKey;
+      if (mod && e.key === "Enter") {
+        e.preventDefault();
+        runActiveQuery();
+      } else if (mod && e.key === "t") {
+        e.preventDefault();
+        addTab();
+      } else if (mod && e.key === "w") {
+        e.preventDefault();
+        closeActiveTab();
+      } else if (e.key === "Escape") {
+        const tab = tabs.find((t) => t.id === activeTabId);
+        if (tab?.isRunning) cancelActiveQuery();
+      }
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [runActiveQuery, addTab, closeActiveTab, cancelActiveQuery, tabs, activeTabId]);
+
+  const ctxValue: WorkspaceContextValue = {
+    activeTab,
+    tabs,
+    setActiveTabId,
+    updateTab,
+    addTab,
+    closeTab,
+    closeActiveTab,
+    runActiveQuery,
+    cancelActiveQuery,
+    insertSql,
+    showConnectionDialog,
+    openConnectionDialog: () => setShowConnectionDialog(true),
+    closeConnectionDialog: () => setShowConnectionDialog(false),
+  };
+
+  return (
+    <WorkspaceContext.Provider value={ctxValue}>
+      <div
+        className="flex h-full w-full overflow-hidden"
+        style={{ background: "var(--bg-base)" }}
+      >
+        {/* ── Sidebar ─────────────────────────────────────── */}
+        <div
+          className="flex flex-col shrink-0 border-r overflow-hidden"
+          style={{
+            width: "var(--sidebar-width)",
+            borderColor: "var(--border)",
+            background: "var(--bg-surface)",
+          }}
+        >
+          <ConnectionSidebar />
+        </div>
+
+        {/* ── Main workspace ──────────────────────────────── */}
+        <div className="flex flex-col flex-1 overflow-hidden">
+          {/* Tab bar */}
+          <TabBar />
+
+          {/* Editor + Results */}
+          <div className="flex flex-col flex-1 overflow-hidden">
+            {/* Editor — fixed 40% height */}
+            <div
+              className="shrink-0 border-b overflow-hidden"
+              style={{
+                height: "40%",
+                borderColor: "var(--border)",
+              }}
+            >
+              <QueryEditor
+                key={activeTab.id}
+                ref={editorRef}
+                defaultValue={activeTab.sql}
+                onValueChange={(sql) => updateTab(activeTab.id, { sql })}
+                onRun={runActiveQuery}
+                onCancel={cancelActiveQuery}
+                isRunning={activeTab.isRunning}
+                connectionName={activeTab.connectionName}
+              />
+            </div>
+
+            {/* Results — fills remaining space */}
+            <div className="flex-1 overflow-hidden">
+              <ResultsTable
+                result={activeTab.result}
+                error={activeTab.error}
+                isRunning={activeTab.isRunning}
+              />
+            </div>
+          </div>
+
+          {/* Status bar */}
+          <StatusBar />
+        </div>
+      </div>
+
+      {/* Connection dialog */}
+      {showConnectionDialog && <ConnectionDialog />}
+
+      {/* TanStack Router child outlet */}
+      <Outlet />
+    </WorkspaceContext.Provider>
+  );
+}
+
+export const Route = createRootRoute({
+  component: RootLayout,
+});
