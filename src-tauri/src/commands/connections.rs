@@ -22,6 +22,7 @@ pub struct ConnectionInfo {
     pub port: Option<u16>,
     pub username: Option<String>,
     pub database: Option<String>,
+    #[serde(default)]
     pub is_dangerous: bool,
 }
 
