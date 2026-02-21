@@ -187,6 +187,7 @@ function RootLayout() {
                   <QueryEditor
                     key={activeTab.id}
                     ref={editorRef}
+                    tabId={activeTab.id}
                     defaultValue={activeTab.sql}
                     onValueChange={(sql) => updateTab(activeTab.id, { sql })}
                     onRun={runActiveQuery}

@@ -1,7 +1,7 @@
 //! Migration detection and introspection
 
-use std::path::{Path, PathBuf};
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone)]
 pub struct MigrationFramework {
@@ -157,7 +157,10 @@ pub fn detect_framework(table_names: &[String]) -> Option<&'static MigrationFram
     None
 }
 
-pub fn find_migration_files(project_root: &Path, framework: &MigrationFramework) -> HashMap<String, PathBuf> {
+pub fn find_migration_files(
+    project_root: &Path,
+    framework: &MigrationFramework,
+) -> HashMap<String, PathBuf> {
     let mut files = HashMap::new();
     let migration_dir = find_migration_dir(project_root, framework.migration_dir);
 
@@ -170,11 +173,15 @@ pub fn find_migration_files(project_root: &Path, framework: &MigrationFramework)
                     if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
                         files.insert(stem.to_string(), path.clone());
                     }
-                    let numeric_prefix: String = name.chars()
+                    let numeric_prefix: String = name
+                        .chars()
                         .take_while(|c| c.is_ascii_digit() || *c == '_')
                         .collect();
                     if !numeric_prefix.is_empty() {
-                        files.insert(numeric_prefix.trim_end_matches('_').to_string(), path.clone());
+                        files.insert(
+                            numeric_prefix.trim_end_matches('_').to_string(),
+                            path.clone(),
+                        );
                     }
                 }
             }
@@ -201,6 +208,10 @@ fn find_migration_dir(project_root: &Path, pattern: &str) -> Option<PathBuf> {
         None
     } else {
         let path = project_root.join(pattern);
-        if path.is_dir() { Some(path) } else { None }
+        if path.is_dir() {
+            Some(path)
+        } else {
+            None
+        }
     }
 }

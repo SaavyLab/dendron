@@ -616,40 +616,45 @@ INSERT INTO inventory.stock_levels (warehouse_id, product_id, quantity, reserved
 (1, 14,  15,  2,  5), (2, 14,   9,  0,  5),
 (1, 15,   7,  1,  3), (2, 15,   4,  0,  3);
 
-INSERT INTO inventory.movements (warehouse_id, product_id, movement_type, quantity, reference_id, notes, moved_at)
-SELECT 1, 1, 'inbound',  200, NULL, 'Initial stock from supplier', '2024-09-01 08:00:00+00' UNION ALL
-SELECT 2, 1, 'inbound',  150, NULL, 'Initial stock from supplier', '2024-09-01 10:00:00+00' UNION ALL
-SELECT 1, 5, 'inbound',   50, NULL, 'Initial stock', '2024-09-01 08:30:00+00' UNION ALL
-SELECT 1, 1, 'outbound',   1, 1,    'Fulfil ORD-2024-0001',        '2024-10-03 09:00:00+00' UNION ALL
-SELECT 1, 5, 'outbound',   1, 2,    'Fulfil ORD-2024-0002',        '2024-10-17 08:30:00+00' UNION ALL
-SELECT 2, 3, 'outbound',   1, 3,    'Fulfil ORD-2024-0003',        '2024-11-04 16:00:00+00' UNION ALL
-SELECT 1, 5, 'outbound',   1, 4,    'Fulfil ORD-2024-0004 (MN)',   '2024-11-12 10:00:00+00' UNION ALL
-SELECT 1, 1, 'outbound',   1, 4,    'Fulfil ORD-2024-0004 (KB)',   '2024-11-12 10:00:00+00' UNION ALL
-SELECT 1, 6, 'outbound',   1, 8,    'Fulfil ORD-2024-0008',        '2024-11-26 11:00:00+00' UNION ALL
-SELECT 1, 4, 'inbound',    5, NULL, 'Restock from supplier',       '2024-12-01 09:00:00+00' UNION ALL
-SELECT 1, 5, 'transfer',  10, NULL, 'Transfer to EU warehouse',    '2024-12-05 14:00:00+00' UNION ALL
-SELECT 3, 5, 'inbound',   10, NULL, 'Transfer from US-WEST',       '2024-12-08 10:00:00+00' UNION ALL
-SELECT 4, 4, 'inbound',    1, 5,    'Return for ORD-2024-0005',    '2024-11-20 14:00:00+00' UNION ALL
-SELECT 4, 4, 'outbound',   1, NULL, 'Restock after return inspection', '2024-11-22 09:00:00+00';
+INSERT INTO inventory.movements (warehouse_id, product_id, movement_type, quantity, reference_id, notes, moved_at) VALUES
+(1, 1, 'inbound',  200, NULL, 'Initial stock from supplier',          '2024-09-01 08:00:00+00'),
+(2, 1, 'inbound',  150, NULL, 'Initial stock from supplier',          '2024-09-01 10:00:00+00'),
+(1, 5, 'inbound',   50, NULL, 'Initial stock',                        '2024-09-01 08:30:00+00'),
+(1, 1, 'outbound',   1, 1,   'Fulfil ORD-2024-0001',                  '2024-10-03 09:00:00+00'),
+(1, 5, 'outbound',   1, 2,   'Fulfil ORD-2024-0002',                  '2024-10-17 08:30:00+00'),
+(2, 3, 'outbound',   1, 3,   'Fulfil ORD-2024-0003',                  '2024-11-04 16:00:00+00'),
+(1, 5, 'outbound',   1, 4,   'Fulfil ORD-2024-0004 (MN)',             '2024-11-12 10:00:00+00'),
+(1, 1, 'outbound',   1, 4,   'Fulfil ORD-2024-0004 (KB)',             '2024-11-12 10:00:00+00'),
+(1, 6, 'outbound',   1, 8,   'Fulfil ORD-2024-0008',                  '2024-11-26 11:00:00+00'),
+(1, 4, 'inbound',    5, NULL, 'Restock from supplier',                '2024-12-01 09:00:00+00'),
+(1, 5, 'transfer',  10, NULL, 'Transfer to EU warehouse',             '2024-12-05 14:00:00+00'),
+(3, 5, 'inbound',   10, NULL, 'Transfer from US-WEST',                '2024-12-08 10:00:00+00'),
+(4, 4, 'inbound',    1, 5,   'Return for ORD-2024-0005',              '2024-11-20 14:00:00+00'),
+(4, 4, 'outbound',   1, NULL, 'Restock after return inspection',      '2024-11-22 09:00:00+00');
 
 
 -- ─── Analytics: Sessions ──────────────────────────────────────
 INSERT INTO analytics.sessions (user_id, started_at, ended_at, page_count, referrer, utm_source, utm_medium, utm_campaign, device_type, browser, country_code, metadata)
 SELECT id, '2024-12-15 09:20:00+00', '2024-12-15 11:35:15+00', 24, 'https://google.com', 'google', 'organic', NULL, 'desktop', 'Chrome 121', 'US', '{"resolution": "2560x1440", "os": "macOS 14"}'
-FROM public.users WHERE username = 'alice_j'
-UNION ALL
+FROM public.users WHERE username = 'alice_j';
+
+INSERT INTO analytics.sessions (user_id, started_at, ended_at, page_count, referrer, utm_source, utm_medium, utm_campaign, device_type, browser, country_code, metadata)
 SELECT id, '2024-12-14 14:50:00+00', '2024-12-14 15:36:00+00', 7, NULL, NULL, NULL, NULL, 'desktop', 'Firefox 121', 'US', '{"resolution": "1920x1080", "os": "Windows 11"}'
-FROM public.users WHERE username = 'bob_smith'
-UNION ALL
+FROM public.users WHERE username = 'bob_smith';
+
+INSERT INTO analytics.sessions (user_id, started_at, ended_at, page_count, referrer, utm_source, utm_medium, utm_campaign, device_type, browser, country_code, metadata)
 SELECT id, '2024-12-15 11:00:00+00', '2024-12-15 19:15:30+00', 62, 'https://app.company.org', NULL, NULL, NULL, 'desktop', 'Chrome 121', 'FR', '{"resolution": "3840x2160", "os": "macOS 14", "timezone": "Europe/Paris"}'
-FROM public.users WHERE username = 'carol_w'
-UNION ALL
+FROM public.users WHERE username = 'carol_w';
+
+INSERT INTO analytics.sessions (user_id, started_at, ended_at, page_count, referrer, utm_source, utm_medium, utm_campaign, device_type, browser, country_code, metadata)
 SELECT id, '2024-12-15 08:40:00+00', '2024-12-15 12:10:45+00', 31, 'https://twitter.com', 'twitter', 'social', 'devtools-launch', 'desktop', 'Arc 1.40', 'US', '{"resolution": "2560x1600", "os": "macOS 14"}'
-FROM public.users WHERE username = 'eve_m'
-UNION ALL
+FROM public.users WHERE username = 'eve_m';
+
+INSERT INTO analytics.sessions (user_id, started_at, ended_at, page_count, referrer, utm_source, utm_medium, utm_campaign, device_type, browser, country_code, metadata)
 SELECT id, '2024-12-15 07:10:00+00', '2024-12-15 08:30:10+00', 12, NULL, NULL, NULL, NULL, 'mobile', 'Safari 17', 'TW', '{"device": "iPhone 15 Pro", "os": "iOS 17"}'
-FROM public.users WHERE username = 'grace_l'
-UNION ALL
+FROM public.users WHERE username = 'grace_l';
+
+INSERT INTO analytics.sessions (user_id, started_at, ended_at, page_count, referrer, utm_source, utm_medium, utm_campaign, device_type, browser, country_code, metadata)
 SELECT id, '2024-12-15 13:42:00+00', '2024-12-15 23:59:59+00', 88, 'https://bigcorp.com/intranet', 'internal', 'direct', NULL, 'desktop', 'Edge 121', 'US', '{"resolution": "1920x1200", "os": "Windows 11", "corporate_sso": true}'
 FROM public.users WHERE username = 'henry_b';
 
