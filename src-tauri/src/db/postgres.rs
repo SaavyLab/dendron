@@ -49,21 +49,48 @@ impl DatabaseConnection {
                             .map(|c| c.type_info().name())
                             .unwrap_or("");
 
-                        row.try_get_raw(i).ok().and_then(|v| {
+                        let decoded = row.try_get_raw(i).ok().and_then(|v| {
                             if v.is_null() {
-                                Some("NULL".to_string())
-                            } else if type_name == "JSONB" || type_name == "JSON" {
-                                row.try_get::<serde_json::Value, _>(i).ok()
-                                    .map(|json| serde_json::to_string_pretty(&json).unwrap_or_else(|_| json.to_string()))
-                            } else {
-                                row.try_get::<String, _>(i)
-                                    .or_else(|_| row.try_get::<i64, _>(i).map(|v| v.to_string()))
-                                    .or_else(|_| row.try_get::<i32, _>(i).map(|v| v.to_string()))
-                                    .or_else(|_| row.try_get::<f64, _>(i).map(|v| v.to_string()))
-                                    .or_else(|_| row.try_get::<bool, _>(i).map(|v| v.to_string()))
-                                    .ok()
+                                return Some("NULL".to_string());
                             }
-                        }).unwrap_or_else(|| "<binary>".to_string())
+                            match type_name {
+                                "JSONB" | "JSON" =>
+                                    row.try_get::<serde_json::Value, _>(i).ok()
+                                        .map(|j| serde_json::to_string_pretty(&j).unwrap_or_else(|_| j.to_string())),
+                                "BYTEA" =>
+                                    row.try_get::<Vec<u8>, _>(i).ok().map(|b| {
+                                        let hex: String = b.iter().take(32).map(|byte| format!("{byte:02x}")).collect();
+                                        if b.len() > 32 { format!("\\x{hex}…") } else { format!("\\x{hex}") }
+                                    }),
+                                "TIMESTAMPTZ" =>
+                                    row.try_get::<sqlx::types::chrono::DateTime<sqlx::types::chrono::Utc>, _>(i).ok()
+                                        .map(|v| v.to_rfc3339()),
+                                "TIMESTAMP" =>
+                                    row.try_get::<sqlx::types::chrono::NaiveDateTime, _>(i).ok()
+                                        .map(|v| v.to_string()),
+                                "DATE" =>
+                                    row.try_get::<sqlx::types::chrono::NaiveDate, _>(i).ok()
+                                        .map(|v| v.to_string()),
+                                "TIME" | "TIMETZ" =>
+                                    row.try_get::<sqlx::types::chrono::NaiveTime, _>(i).ok()
+                                        .map(|v| v.to_string()),
+                                "UUID" =>
+                                    row.try_get::<sqlx::types::Uuid, _>(i).ok()
+                                        .map(|v| v.to_string()),
+                                "INT2" =>
+                                    row.try_get::<i16, _>(i).ok().map(|v| v.to_string()),
+                                "FLOAT4" =>
+                                    row.try_get::<f32, _>(i).ok().map(|v| v.to_string()),
+                                _ =>
+                                    row.try_get::<String, _>(i).ok()
+                                        .or_else(|| row.try_get::<i64, _>(i).map(|v| v.to_string()).ok())
+                                        .or_else(|| row.try_get::<i32, _>(i).map(|v| v.to_string()).ok())
+                                        .or_else(|| row.try_get::<f64, _>(i).map(|v| v.to_string()).ok())
+                                        .or_else(|| row.try_get::<bool, _>(i).map(|v| v.to_string()).ok()),
+                            }
+                        });
+
+                        decoded.unwrap_or_else(|| format!("<{}>", type_name.to_lowercase()))
                     }).collect()
                 }).collect();
 
@@ -94,21 +121,34 @@ impl DatabaseConnection {
 
                 let rows: Vec<Vec<String>> = collected.iter().map(|row| {
                     (0..row.columns().len()).map(|i| {
-                        row.try_get_raw(i).ok().and_then(|v| {
+                        let type_name = row.columns().get(i)
+                            .map(|c| c.type_info().name())
+                            .unwrap_or("");
+
+                        let decoded = row.try_get_raw(i).ok().and_then(|v| {
                             if v.is_null() {
-                                Some("NULL".to_string())
-                            } else {
-                                row.try_get::<String, _>(i).ok().map(|s| {
-                                    if s.starts_with('{') || s.starts_with('[') {
-                                        serde_json::from_str::<serde_json::Value>(&s).ok()
-                                            .map(|v| serde_json::to_string_pretty(&v).unwrap_or(s.clone()))
-                                            .unwrap_or(s)
-                                    } else { s }
-                                })
-                                .or_else(|| row.try_get::<i64, _>(i).map(|v| v.to_string()).ok())
-                                .or_else(|| row.try_get::<f64, _>(i).map(|v| v.to_string()).ok())
+                                return Some("NULL".to_string());
                             }
-                        }).unwrap_or_else(|| "<binary>".to_string())
+                            match type_name {
+                                "BLOB" =>
+                                    row.try_get::<Vec<u8>, _>(i).ok().map(|b| {
+                                        let hex: String = b.iter().take(32).map(|byte| format!("{byte:02x}")).collect();
+                                        if b.len() > 32 { format!("\\x{hex}…") } else { format!("\\x{hex}") }
+                                    }),
+                                _ =>
+                                    row.try_get::<String, _>(i).ok().map(|s| {
+                                        if s.starts_with('{') || s.starts_with('[') {
+                                            serde_json::from_str::<serde_json::Value>(&s).ok()
+                                                .map(|v| serde_json::to_string_pretty(&v).unwrap_or(s.clone()))
+                                                .unwrap_or(s)
+                                        } else { s }
+                                    })
+                                    .or_else(|| row.try_get::<i64, _>(i).map(|v| v.to_string()).ok())
+                                    .or_else(|| row.try_get::<f64, _>(i).map(|v| v.to_string()).ok()),
+                            }
+                        });
+
+                        decoded.unwrap_or_else(|| format!("<{}>", type_name.to_lowercase()))
                     }).collect()
                 }).collect();
 

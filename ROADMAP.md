@@ -13,7 +13,8 @@ These are friction points you'd hit constantly. Do these first.
 - [x] **Remove SQLite demo seeding from app** — `init_demo_sqlite()` was silently mutating user DBs on every connect; dev data lives in seed scripts
 - [x] **Fix safety confirmation DB type** — `check_query_safety` was passing hardcoded `false`/`"current"`, so the destructive-query modal was never shown; now passes real dialect and connected state
 - [x] **Result streaming with row cap** — replaced `fetch_all` with a `fetch()` stream that breaks at 1001 rows, capping memory at `DEFAULT_ROW_LIMIT + 1` rows regardless of table size
-- [ ] **Cell detail view** — click a cell to open a panel with the full value (critical for JSON, long text, arrays)
+- [x] **Non-text column type decoding** — timestamps (TIMESTAMP/TIMESTAMPTZ→RFC3339/ISO), UUIDs, SMALLINT, FLOAT4, BYTEA (hex), BLOB; unknown types show `<type_name>` instead of `<binary>`
+- [x] **Cell detail view** — click any cell to open a bottom panel with the full untruncated value, column name + type badge, copy button, ESC to close
 - [ ] **Result pagination** — 1000-row hard limit with just a "Truncated" badge; needs next/prev page or offset controls
 - [ ] **Copy from results** — keyboard-driven copy of cell value or full row (Cmd/Ctrl+C on selection)
 

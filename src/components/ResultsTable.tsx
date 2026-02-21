@@ -1,4 +1,4 @@
-import { useRef, useMemo, useState } from "react";
+import { useRef, useMemo, useState, useEffect } from "react";
 import {
   useReactTable,
   getCoreRowModel,
@@ -149,8 +149,17 @@ function Toolbar({
   );
 }
 
+interface SelectedCell {
+  rowIdx: number;
+  colIdx: number;
+  col: string;
+  type: string;
+  value: string;
+}
+
 function DataTable({ result }: { result: QueryResult }) {
   const parentRef = useRef<HTMLDivElement>(null);
+  const [selectedCell, setSelectedCell] = useState<SelectedCell | null>(null);
 
   const columns = useMemo<ColumnDef<string[]>[]>(
     () =>
@@ -292,28 +301,164 @@ function DataTable({ result }: { result: QueryResult }) {
                   background: isEven ? "transparent" : "rgba(255,255,255,0.01)",
                 }}
               >
-                {row.getVisibleCells().map((cell) => (
-                  <div
-                    key={cell.id}
-                    className="flex items-center px-2 border-r shrink-0 overflow-hidden"
-                    style={{
-                      width: `${cell.column.getSize()}px`,
-                      borderColor: "var(--border-subtle)",
-                      fontFamily: "var(--font-mono)",
-                      fontSize: "12px",
-                      color: "var(--text-primary)",
-                      whiteSpace: "nowrap",
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                    }}
-                  >
-                    {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                  </div>
-                ))}
+                {row.getVisibleCells().map((cell) => {
+                  const colIdx = parseInt(cell.column.id.replace("col_", ""), 10);
+                  const isSelected =
+                    selectedCell?.rowIdx === virtualRow.index &&
+                    selectedCell?.colIdx === colIdx;
+                  return (
+                    <div
+                      key={cell.id}
+                      className="flex items-center px-2 border-r shrink-0 overflow-hidden"
+                      style={{
+                        width: `${cell.column.getSize()}px`,
+                        borderColor: "var(--border-subtle)",
+                        fontFamily: "var(--font-mono)",
+                        fontSize: "12px",
+                        color: "var(--text-primary)",
+                        whiteSpace: "nowrap",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        cursor: "pointer",
+                        background: isSelected
+                          ? "rgba(96,165,250,0.15)"
+                          : undefined,
+                      }}
+                      onClick={() =>
+                        setSelectedCell({
+                          rowIdx: virtualRow.index,
+                          colIdx,
+                          col: result.columns[colIdx],
+                          type: result.column_types[colIdx] ?? "",
+                          value: result.rows[virtualRow.index][colIdx] ?? "NULL",
+                        })
+                      }
+                    >
+                      {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                    </div>
+                  );
+                })}
               </div>
             );
           })}
         </div>
+      </div>
+
+      {selectedCell && (
+        <CellDetailPanel cell={selectedCell} onClose={() => setSelectedCell(null)} />
+      )}
+    </div>
+  );
+}
+
+function CellDetailPanel({
+  cell,
+  onClose,
+}: {
+  cell: SelectedCell;
+  onClose: () => void;
+}) {
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") onClose();
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  const isNull = cell.value === "NULL";
+
+  async function copy() {
+    await navigator.clipboard.writeText(isNull ? "" : cell.value);
+  }
+
+  return (
+    <div
+      className="shrink-0 flex flex-col border-t"
+      style={{ height: "140px", background: "var(--bg-elevated)", borderColor: "var(--border)" }}
+    >
+      {/* Header */}
+      <div
+        className="flex items-center gap-2 px-2 shrink-0 border-b"
+        style={{ height: "28px", borderColor: "var(--border)" }}
+      >
+        <span
+          style={{
+            fontFamily: "var(--font-mono)",
+            fontSize: "11px",
+            fontWeight: 500,
+            color: "var(--text-primary)",
+          }}
+        >
+          {cell.col}
+        </span>
+        {cell.type && (
+          <span
+            style={{
+              fontFamily: "var(--font-mono)",
+              fontSize: "10px",
+              color: "var(--text-muted)",
+              background: "rgba(255,255,255,0.06)",
+              borderRadius: "3px",
+              padding: "0 4px",
+              lineHeight: "16px",
+            }}
+          >
+            {cell.type.toLowerCase()}
+          </span>
+        )}
+        <div style={{ flex: 1 }} />
+        <button
+          onClick={copy}
+          style={{
+            fontFamily: "var(--font-mono)",
+            fontSize: "11px",
+            color: "var(--text-muted)",
+            padding: "2px 6px",
+            borderRadius: "3px",
+          }}
+          onMouseEnter={(e) =>
+            ((e.currentTarget as HTMLButtonElement).style.color = "var(--text-primary)")
+          }
+          onMouseLeave={(e) =>
+            ((e.currentTarget as HTMLButtonElement).style.color = "var(--text-muted)")
+          }
+        >
+          Copy
+        </button>
+        <button
+          onClick={onClose}
+          style={{
+            fontSize: "16px",
+            color: "var(--text-muted)",
+            padding: "0 4px",
+            lineHeight: 1,
+          }}
+          onMouseEnter={(e) =>
+            ((e.currentTarget as HTMLButtonElement).style.color = "var(--text-primary)")
+          }
+          onMouseLeave={(e) =>
+            ((e.currentTarget as HTMLButtonElement).style.color = "var(--text-muted)")
+          }
+        >
+          ×
+        </button>
+      </div>
+
+      {/* Value */}
+      <div
+        className="flex-1 overflow-auto px-2 py-1.5 selectable"
+        style={{
+          fontFamily: "var(--font-mono)",
+          fontSize: "12px",
+          lineHeight: 1.6,
+          whiteSpace: "pre-wrap",
+          wordBreak: "break-all",
+          color: isNull ? "var(--text-muted)" : "var(--text-primary)",
+          fontStyle: isNull ? "italic" : "normal",
+        }}
+      >
+        {isNull ? "NULL" : cell.value}
       </div>
     </div>
   );
