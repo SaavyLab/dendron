@@ -191,18 +191,29 @@ interface SelectedCell {
 function DataTable({ result, onLoadMore }: { result: QueryResult; onLoadMore?: () => Promise<void> }) {
   const parentRef = useRef<HTMLDivElement>(null);
   const [selectedCell, setSelectedCell] = useState<SelectedCell | null>(null);
+  const [selectedRow, setSelectedRow] = useState<number | null>(null);
 
   const columns = useMemo<ColumnDef<string[]>[]>(
-    () =>
-      result.columns.map((col, i) => ({
+    () => [
+      {
+        id: "__row__",
+        header: "#",
+        accessorFn: () => "",
+        size: 48,
+        minSize: 48,
+        maxSize: 48,
+        enableResizing: false,
+        cell: () => null,
+      },
+      ...result.columns.map((col, i) => ({
         id: `col_${i}`,
         accessorFn: (row: string[]) => row[i],
         header: col,
         size: Math.max(80, Math.min(col.length * 9 + 24, 200)),
         minSize: 40,
         maxSize: 600,
-        cell: ({ getValue }) => {
-          const val = getValue<string>();
+        cell: ({ getValue }: { getValue: () => unknown }) => {
+          const val = getValue() as string;
           if (val === null || val === "NULL") {
             return (
               <span style={{ color: "var(--text-muted)", fontStyle: "italic", fontFamily: "var(--font-mono)" }}>
@@ -213,6 +224,7 @@ function DataTable({ result, onLoadMore }: { result: QueryResult; onLoadMore?: (
           return val;
         },
       })),
+    ],
     [result.columns]
   );
 
@@ -241,22 +253,28 @@ function DataTable({ result, onLoadMore }: { result: QueryResult; onLoadMore?: (
   const tableWidth = table.getCenterTotalSize();
 
   useEffect(() => {
-    if (selectedCell !== null) {
-      rowVirtualizer.scrollToIndex(selectedCell.rowIdx, { align: "auto" });
+    const idx = selectedCell?.rowIdx ?? selectedRow;
+    if (idx !== null && idx !== undefined) {
+      rowVirtualizer.scrollToIndex(idx, { align: "auto" });
     }
-  }, [selectedCell, rowVirtualizer]);
+  }, [selectedCell, selectedRow, rowVirtualizer]);
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      if (!(e.ctrlKey || e.metaKey) || e.key !== "c" || !selectedCell) return;
-      // Only intercept when no text is highlighted — let normal text copy work otherwise
+      if (!(e.ctrlKey || e.metaKey) || e.key !== "c") return;
       if (window.getSelection()?.toString()) return;
-      e.preventDefault();
-      navigator.clipboard.writeText(selectedCell.value === "NULL" ? "" : selectedCell.value);
+      if (selectedCell) {
+        e.preventDefault();
+        navigator.clipboard.writeText(selectedCell.value === "NULL" ? "" : selectedCell.value);
+      } else if (selectedRow !== null) {
+        e.preventDefault();
+        // Copy row as tab-separated values (pastes cleanly into spreadsheets)
+        navigator.clipboard.writeText(result.rows[selectedRow].join("\t"));
+      }
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [selectedCell]);
+  }, [selectedCell, selectedRow, result.rows]);
 
   return (
     <div className="flex flex-col h-full overflow-hidden" style={{ background: "var(--bg-surface)" }}>
@@ -279,51 +297,54 @@ function DataTable({ result, onLoadMore }: { result: QueryResult; onLoadMore?: (
             height: `${HEADER_HEIGHT}px`,
           }}
         >
-          {table.getFlatHeaders().map((header) => (
-            <div
-              key={header.id}
-              className="relative flex items-center border-r px-2 shrink-0 select-none"
-              style={{
-                width: `${header.getSize()}px`,
-                borderColor: "var(--border)",
-                fontFamily: "var(--font-mono)",
-                fontSize: "11px",
-                fontWeight: 500,
-                color: "var(--text-secondary)",
-                textTransform: "uppercase",
-                letterSpacing: "0.04em",
-                overflow: "hidden",
-              }}
-            >
-              <span className="truncate">
-                {header.isPlaceholder
-                  ? null
-                  : flexRender(header.column.columnDef.header, header.getContext())}
-              </span>
-
-              {/* Resize handle */}
+          {table.getFlatHeaders().map((header) => {
+            const isGutter = header.column.id === "__row__";
+            return (
               <div
-                onMouseDown={header.getResizeHandler()}
-                className="absolute right-0 top-0 h-full w-1 cursor-col-resize"
+                key={header.id}
+                className="relative flex items-center border-r shrink-0 select-none"
                 style={{
-                  background: header.column.getIsResizing()
-                    ? "var(--accent)"
-                    : "transparent",
-                  transition: "background 0.15s",
+                  width: `${header.getSize()}px`,
+                  borderColor: "var(--border)",
+                  fontFamily: "var(--font-mono)",
+                  fontSize: "11px",
+                  fontWeight: 500,
+                  overflow: "hidden",
+                  ...(isGutter
+                    ? { justifyContent: "center", color: "var(--text-muted)", background: "rgba(0,0,0,0.12)" }
+                    : { paddingLeft: "8px", paddingRight: "8px", color: "var(--text-secondary)", textTransform: "uppercase" as const, letterSpacing: "0.04em" }),
                 }}
-                onMouseEnter={(e) => {
-                  if (!header.column.getIsResizing()) {
-                    (e.currentTarget as HTMLDivElement).style.background = "var(--border-strong)";
-                  }
-                }}
-                onMouseLeave={(e) => {
-                  if (!header.column.getIsResizing()) {
-                    (e.currentTarget as HTMLDivElement).style.background = "transparent";
-                  }
-                }}
-              />
-            </div>
-          ))}
+              >
+                {isGutter ? (
+                  <span>#</span>
+                ) : (
+                  <span className="truncate">
+                    {header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}
+                  </span>
+                )}
+
+                {/* Resize handle — skip for gutter */}
+                {!isGutter && (
+                  <div
+                    onMouseDown={header.getResizeHandler()}
+                    className="absolute right-0 top-0 h-full w-1 cursor-col-resize"
+                    style={{
+                      background: header.column.getIsResizing() ? "var(--accent)" : "transparent",
+                      transition: "background 0.15s",
+                    }}
+                    onMouseEnter={(e) => {
+                      if (!header.column.getIsResizing())
+                        (e.currentTarget as HTMLDivElement).style.background = "var(--border-strong)";
+                    }}
+                    onMouseLeave={(e) => {
+                      if (!header.column.getIsResizing())
+                        (e.currentTarget as HTMLDivElement).style.background = "transparent";
+                    }}
+                  />
+                )}
+              </div>
+            );
+          })}
         </div>
 
         {/* Rows */}
@@ -351,8 +372,38 @@ function DataTable({ result, onLoadMore }: { result: QueryResult; onLoadMore?: (
                 }}
               >
                 {row.getVisibleCells().map((cell) => {
+                  const isGutter = cell.column.id === "__row__";
+                  const isRowSelected = selectedRow === virtualRow.index;
+
+                  if (isGutter) {
+                    return (
+                      <div
+                        key={cell.id}
+                        className="flex items-center justify-end border-r shrink-0 select-none"
+                        style={{
+                          width: `${cell.column.getSize()}px`,
+                          paddingRight: "8px",
+                          borderColor: "var(--border-subtle)",
+                          fontFamily: "var(--font-mono)",
+                          fontSize: "11px",
+                          cursor: "pointer",
+                          color: isRowSelected ? "var(--accent)" : "var(--text-muted)",
+                          background: isRowSelected
+                            ? "rgba(96,165,250,0.18)"
+                            : "rgba(0,0,0,0.12)",
+                        }}
+                        onClick={() => {
+                          setSelectedRow(virtualRow.index);
+                          setSelectedCell(null);
+                        }}
+                      >
+                        {virtualRow.index + 1}
+                      </div>
+                    );
+                  }
+
                   const colIdx = parseInt(cell.column.id.replace("col_", ""), 10);
-                  const isSelected =
+                  const isCellSelected =
                     selectedCell?.rowIdx === virtualRow.index &&
                     selectedCell?.colIdx === colIdx;
                   return (
@@ -369,19 +420,22 @@ function DataTable({ result, onLoadMore }: { result: QueryResult; onLoadMore?: (
                         overflow: "hidden",
                         textOverflow: "ellipsis",
                         cursor: "pointer",
-                        background: isSelected
+                        background: isCellSelected
                           ? "rgba(96,165,250,0.15)"
+                          : isRowSelected
+                          ? "rgba(96,165,250,0.07)"
                           : undefined,
                       }}
-                      onClick={() =>
+                      onClick={() => {
                         setSelectedCell({
                           rowIdx: virtualRow.index,
                           colIdx,
                           col: result.columns[colIdx],
                           type: result.column_types[colIdx] ?? "",
                           value: result.rows[virtualRow.index][colIdx] ?? "NULL",
-                        })
-                      }
+                        });
+                        setSelectedRow(null);
+                      }}
                     >
                       {flexRender(cell.column.columnDef.cell, cell.getContext())}
                     </div>

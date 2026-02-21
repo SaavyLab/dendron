@@ -85,6 +85,13 @@ impl DatabaseConnection {
                                     row.try_get::<f32, _>(i).ok().map(|v| v.to_string()),
                                 "NUMERIC" | "DECIMAL" =>
                                     row.try_get::<rust_decimal::Decimal, _>(i).ok().map(|v| v.to_string()),
+                                "MONEY" =>
+                                    // Binary: int64 representing cents (scale=2, always)
+                                    row.try_get_unchecked::<i64, _>(i).ok().map(|cents| {
+                                        let whole = cents / 100;
+                                        let frac = (cents % 100).unsigned_abs();
+                                        format!("{whole}.{frac:02}")
+                                    }),
                                 "INET" | "CIDR" =>
                                     // Binary format: family(1) bits(1) is_cidr(1) addr_len(1) addr(N)
                                     row.try_get_unchecked::<Vec<u8>, _>(i).ok().and_then(|bytes| {
@@ -121,6 +128,22 @@ impl DatabaseConnection {
                                             Some(bytes.iter().map(|b| format!("{b:02x}")).collect::<Vec<_>>().join(":"))
                                         } else { None }
                                     }),
+                                name if name.ends_with("[]") => {
+                                    let base = name.trim_end_matches("[]");
+                                    let fmt = |v: Vec<String>| format!("[{}]", v.join(", "));
+                                    match base {
+                                        "INT2" => row.try_get::<Vec<i16>, _>(i).ok().map(|v| fmt(v.iter().map(|x| x.to_string()).collect())),
+                                        "INT4" => row.try_get::<Vec<i32>, _>(i).ok().map(|v| fmt(v.iter().map(|x| x.to_string()).collect())),
+                                        "INT8" => row.try_get::<Vec<i64>, _>(i).ok().map(|v| fmt(v.iter().map(|x| x.to_string()).collect())),
+                                        "FLOAT4" => row.try_get::<Vec<f32>, _>(i).ok().map(|v| fmt(v.iter().map(|x| x.to_string()).collect())),
+                                        "FLOAT8" => row.try_get::<Vec<f64>, _>(i).ok().map(|v| fmt(v.iter().map(|x| x.to_string()).collect())),
+                                        "BOOL" => row.try_get::<Vec<bool>, _>(i).ok().map(|v| fmt(v.iter().map(|x| x.to_string()).collect())),
+                                        "TEXT" | "VARCHAR" | "BPCHAR" | "NAME" => row.try_get::<Vec<String>, _>(i).ok().map(|v| fmt(v.iter().map(|s| format!("{s:?}")).collect())),
+                                        "UUID" => row.try_get::<Vec<sqlx::types::Uuid>, _>(i).ok().map(|v| fmt(v.iter().map(|x| x.to_string()).collect())),
+                                        "NUMERIC" | "DECIMAL" => row.try_get::<Vec<rust_decimal::Decimal>, _>(i).ok().map(|v| fmt(v.iter().map(|x| x.to_string()).collect())),
+                                        _ => None,
+                                    }
+                                },
                                 _ =>
                                     row.try_get::<String, _>(i).ok()
                                         .or_else(|| row.try_get::<i64, _>(i).map(|v| v.to_string()).ok())
