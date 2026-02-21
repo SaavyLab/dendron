@@ -73,3 +73,8 @@ pub fn get_row_as_insert(
 
     Ok(format!("INSERT INTO {} ({}) VALUES ({});", table, col_list, val_list.join(", ")))
 }
+
+#[tauri::command]
+pub fn save_file(path: String, content: String) -> Result<(), String> {
+    std::fs::write(&path, content).map_err(|e| e.to_string())
+}

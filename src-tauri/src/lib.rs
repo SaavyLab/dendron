@@ -43,6 +43,7 @@ pub fn run() {
             export_csv,
             export_json,
             get_row_as_insert,
+            save_file,
             // config
             get_settings,
             save_settings,

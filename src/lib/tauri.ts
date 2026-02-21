@@ -67,6 +67,9 @@ export const api = {
 
     rowAsInsert: (table: string, row: string[], columns: string[]) =>
       invoke<string>("get_row_as_insert", { table, row, columns }),
+
+    saveFile: (path: string, content: string) =>
+      invoke<void>("save_file", { path, content }),
   },
 
   config: {

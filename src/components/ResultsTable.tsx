@@ -11,7 +11,8 @@ import type { QueryResult } from "@/lib/types";
 import { Badge } from "@/components/ui/Badge";
 import { Spinner } from "@/components/ui/Spinner";
 import { Button } from "@/components/ui/Button";
-import { formatMs, downloadFile } from "@/lib/utils";
+import { formatMs } from "@/lib/utils";
+import { save } from "@tauri-apps/plugin-dialog";
 import { api } from "@/lib/tauri";
 
 interface ResultsTableProps {
@@ -102,7 +103,8 @@ function Toolbar({
     if (!result) return;
     try {
       const csv = await api.export.csv(result);
-      downloadFile(csv, "export.csv", "text/csv");
+      const path = await save({ defaultPath: "export.csv", filters: [{ name: "CSV", extensions: ["csv"] }] });
+      if (path) await api.export.saveFile(path, csv);
     } catch {
       // ignore
     }
@@ -112,7 +114,8 @@ function Toolbar({
     if (!result) return;
     try {
       const json = await api.export.json(result);
-      downloadFile(json, "export.json", "application/json");
+      const path = await save({ defaultPath: "export.json", filters: [{ name: "JSON", extensions: ["json"] }] });
+      if (path) await api.export.saveFile(path, json);
     } catch {
       // ignore
     }
@@ -242,6 +245,18 @@ function DataTable({ result, onLoadMore }: { result: QueryResult; onLoadMore?: (
       rowVirtualizer.scrollToIndex(selectedCell.rowIdx, { align: "auto" });
     }
   }, [selectedCell, rowVirtualizer]);
+
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (!(e.ctrlKey || e.metaKey) || e.key !== "c" || !selectedCell) return;
+      // Only intercept when no text is highlighted — let normal text copy work otherwise
+      if (window.getSelection()?.toString()) return;
+      e.preventDefault();
+      navigator.clipboard.writeText(selectedCell.value === "NULL" ? "" : selectedCell.value);
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [selectedCell]);
 
   return (
     <div className="flex flex-col h-full overflow-hidden" style={{ background: "var(--bg-surface)" }}>
