@@ -1,4 +1,5 @@
 use crate::error::Result;
+use futures::TryStreamExt;
 use serde::{Deserialize, Serialize};
 use sqlx::{Row, Column, ValueRef, TypeInfo};
 use super::DatabaseConnection;
@@ -21,10 +22,19 @@ impl DatabaseConnection {
 
         match self {
             DatabaseConnection::Postgres(pool) => {
-                let rows = sqlx::query(sql).fetch_all(pool).await?;
+                let mut stream = sqlx::query(sql).fetch(pool);
+                let mut collected = Vec::with_capacity(DEFAULT_ROW_LIMIT + 1);
+                while let Some(row) = stream.try_next().await? {
+                    collected.push(row);
+                    if collected.len() > DEFAULT_ROW_LIMIT { break; }
+                }
+                drop(stream);
                 let execution_time_ms = start.elapsed().as_millis();
 
-                let (columns, column_types): (Vec<String>, Vec<String>) = if let Some(row) = rows.first() {
+                let truncated = collected.len() > DEFAULT_ROW_LIMIT;
+                if truncated { collected.pop(); }
+
+                let (columns, column_types): (Vec<String>, Vec<String>) = if let Some(row) = collected.first() {
                     row.columns()
                         .iter()
                         .map(|c| (c.name().to_string(), c.type_info().name().to_string()))
@@ -33,7 +43,7 @@ impl DatabaseConnection {
                     (Vec::new(), Vec::new())
                 };
 
-                let data: Vec<Vec<String>> = rows.iter().map(|row| {
+                let rows: Vec<Vec<String>> = collected.iter().map(|row| {
                     (0..row.columns().len()).map(|i| {
                         let type_name = row.columns().get(i)
                             .map(|c| c.type_info().name())
@@ -57,18 +67,23 @@ impl DatabaseConnection {
                     }).collect()
                 }).collect();
 
-                let total_rows = data.len();
-                let truncated = total_rows > DEFAULT_ROW_LIMIT;
-                let rows = if truncated { data.into_iter().take(DEFAULT_ROW_LIMIT).collect() } else { data };
                 let row_count = rows.len();
-
                 Ok(QueryResult { columns, column_types, rows, row_count, execution_time_ms, truncated })
             }
             DatabaseConnection::Sqlite(pool) => {
-                let rows = sqlx::query(sql).fetch_all(pool).await?;
+                let mut stream = sqlx::query(sql).fetch(pool);
+                let mut collected = Vec::with_capacity(DEFAULT_ROW_LIMIT + 1);
+                while let Some(row) = stream.try_next().await? {
+                    collected.push(row);
+                    if collected.len() > DEFAULT_ROW_LIMIT { break; }
+                }
+                drop(stream);
                 let execution_time_ms = start.elapsed().as_millis();
 
-                let (columns, column_types): (Vec<String>, Vec<String>) = if let Some(row) = rows.first() {
+                let truncated = collected.len() > DEFAULT_ROW_LIMIT;
+                if truncated { collected.pop(); }
+
+                let (columns, column_types): (Vec<String>, Vec<String>) = if let Some(row) = collected.first() {
                     row.columns()
                         .iter()
                         .map(|c| (c.name().to_string(), c.type_info().name().to_string()))
@@ -77,7 +92,7 @@ impl DatabaseConnection {
                     (Vec::new(), Vec::new())
                 };
 
-                let data: Vec<Vec<String>> = rows.iter().map(|row| {
+                let rows: Vec<Vec<String>> = collected.iter().map(|row| {
                     (0..row.columns().len()).map(|i| {
                         row.try_get_raw(i).ok().and_then(|v| {
                             if v.is_null() {
@@ -97,11 +112,7 @@ impl DatabaseConnection {
                     }).collect()
                 }).collect();
 
-                let total_rows = data.len();
-                let truncated = total_rows > DEFAULT_ROW_LIMIT;
-                let rows = if truncated { data.into_iter().take(DEFAULT_ROW_LIMIT).collect() } else { data };
                 let row_count = rows.len();
-
                 Ok(QueryResult { columns, column_types, rows, row_count, execution_time_ms, truncated })
             }
         }

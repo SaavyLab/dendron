@@ -10,6 +10,9 @@ These are friction points you'd hit constantly. Do these first.
 
 - [x] **Resizable editor/results split** — draggable vertical and horizontal panel splits via react-resizable-panels
 - [x] **SQL autocomplete** — context-aware via `@codemirror/lang-sql` schema option + Compartment; schema fetched once on connect
+- [x] **Remove SQLite demo seeding from app** — `init_demo_sqlite()` was silently mutating user DBs on every connect; dev data lives in seed scripts
+- [x] **Fix safety confirmation DB type** — `check_query_safety` was passing hardcoded `false`/`"current"`, so the destructive-query modal was never shown; now passes real dialect and connected state
+- [x] **Result streaming with row cap** — replaced `fetch_all` with a `fetch()` stream that breaks at 1001 rows, capping memory at `DEFAULT_ROW_LIMIT + 1` rows regardless of table size
 - [ ] **Cell detail view** — click a cell to open a panel with the full value (critical for JSON, long text, arrays)
 - [ ] **Result pagination** — 1000-row hard limit with just a "Truncated" badge; needs next/prev page or offset controls
 - [ ] **Copy from results** — keyboard-driven copy of cell value or full row (Cmd/Ctrl+C on selection)
@@ -23,12 +26,15 @@ These are friction points you'd hit constantly. Do these first.
 - [ ] **Table browser mode** — browse a table with filter/sort UI without writing SQL
 - [ ] **Query history timestamps** — history stores queries but not when they ran
 - [ ] **Tab persistence** — reopen the app and your tabs/queries are still there
+- [x] **Tab close backend cleanup** — `closeTab` now calls `cancel_query` + `disconnect`; cache cleared via `removeQueries([tabId])`
+- [x] **Schema cache full invalidation on connect** — all tab-scoped keys are `[tabId, ...]`; connect and disconnect both call `removeQueries({ queryKey: [tabId] })` to nuke the full subtree
 
 ---
 
 ## P2 — Nice to have
 
 - [ ] **MySQL/MariaDB support** — only Postgres + SQLite right now
+- [ ] **SQLite PRAGMA identifier escaping** — table names with single-quotes or unusual characters break schema introspection; fix with double-quote wrapping
 - [ ] **SSH tunnel support** — needed for connecting to remote/prod DBs safely
 - [ ] **SQL formatter** — prettify/format the current query
 - [ ] **EXPLAIN plan view** — visualize query execution plan
@@ -48,7 +54,9 @@ These are friction points you'd hit constantly. Do these first.
 - [x] Virtualized results table (handles large result sets)
 - [x] Schema tree (schema → table → columns, lazy loaded)
 - [x] Query cancellation
-- [x] Safety confirmation for destructive queries
+- [x] Safety confirmation for destructive queries (tag-based: `prod`/`production`/`sensitive` connections require confirmation)
+- [x] Tab-scoped state via `TabContext` — single map owns connection Arc, cancel token, and query generation counter; no mutex held across `.await`
+- [x] Concurrent query guard — `runActiveQuery` returns early when `tab.isRunning`
 - [x] Query history (last 100, deduplicated)
 - [x] CSV + JSON export
 - [x] Migration framework detection (Django, Rails, Prisma, Alembic, Flyway, etc.)

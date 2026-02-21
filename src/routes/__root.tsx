@@ -1,5 +1,6 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import { createRootRoute, Outlet } from "@tanstack/react-router";
+import { useQueryClient } from "@tanstack/react-query";
 import { Group as PanelGroup, Panel, Separator as PanelResizeHandle } from "react-resizable-panels";
 import { WorkspaceContext, type WorkspaceContextValue } from "@/lib/WorkspaceContext";
 import type { Tab } from "@/lib/types";
@@ -28,6 +29,7 @@ function RootLayout() {
   const [activeTabId, setActiveTabId] = useState(1);
   const [showConnectionDialog, setShowConnectionDialog] = useState(false);
   const editorRef = useRef<QueryEditorHandle | null>(null);
+  const queryClient = useQueryClient();
 
   const activeTab = tabs.find((t) => t.id === activeTabId) ?? tabs[0];
 
@@ -54,8 +56,12 @@ function RootLayout() {
 
   const closeTab = useCallback(
     (id: number) => {
+      if (tabs.length === 1) return;
+      api.queries.cancel(id).catch(() => {});
+      api.connections.disconnect(id).catch(() => {});
+      queryClient.removeQueries({ queryKey: [id] });
       setTabs((prev) => {
-        if (prev.length === 1) return prev;
+        if (prev.length === 1) return prev; // safety net: authoritative check on actual state
         const idx = prev.findIndex((t) => t.id === id);
         const next = prev.filter((t) => t.id !== id);
         if (id === activeTabId) {
@@ -64,14 +70,14 @@ function RootLayout() {
         return next;
       });
     },
-    [activeTabId]
+    [tabs, activeTabId, queryClient]
   );
 
   const closeActiveTab = useCallback(() => closeTab(activeTabId), [activeTabId, closeTab]);
 
   const runActiveQuery = useCallback(async () => {
     const tab = tabs.find((t) => t.id === activeTabId);
-    if (!tab) return;
+    if (!tab || tab.isRunning) return;
 
     if (!tab.connectionName) {
       updateTab(tab.id, {

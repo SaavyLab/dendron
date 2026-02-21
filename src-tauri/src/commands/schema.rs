@@ -13,11 +13,12 @@ pub struct TableRow {
 
 #[tauri::command]
 pub async fn get_schema_names(tab_id: u32, state: State<'_, AppState>) -> Result<Vec<String>, String> {
-    let connections = state.connections.lock().await;
-    let conn = connections.get(&tab_id)
-        .ok_or_else(|| "No active connection".to_string())?
-        .clone();
-    drop(connections);
+    let conn = {
+        let tabs = state.tabs.lock().await;
+        tabs.get(&tab_id)
+            .ok_or_else(|| "No active connection".to_string())?
+            .connection.clone()
+    };
     conn.get_schema_names().await.map_err(|e| e.to_string())
 }
 
@@ -27,11 +28,12 @@ pub async fn get_tables(
     schema: String,
     state: State<'_, AppState>,
 ) -> Result<Vec<TableRow>, String> {
-    let connections = state.connections.lock().await;
-    let conn = connections.get(&tab_id)
-        .ok_or_else(|| "No active connection".to_string())?
-        .clone();
-    drop(connections);
+    let conn = {
+        let tabs = state.tabs.lock().await;
+        tabs.get(&tab_id)
+            .ok_or_else(|| "No active connection".to_string())?
+            .connection.clone()
+    };
     let tables = conn.get_tables_lazy(&schema).await.map_err(|e| e.to_string())?;
     Ok(tables.into_iter().map(|(name, is_view)| TableRow { name, is_view }).collect())
 }
@@ -43,11 +45,12 @@ pub async fn get_columns(
     table: String,
     state: State<'_, AppState>,
 ) -> Result<Vec<ColumnInfo>, String> {
-    let connections = state.connections.lock().await;
-    let conn = connections.get(&tab_id)
-        .ok_or_else(|| "No active connection".to_string())?
-        .clone();
-    drop(connections);
+    let conn = {
+        let tabs = state.tabs.lock().await;
+        tabs.get(&tab_id)
+            .ok_or_else(|| "No active connection".to_string())?
+            .connection.clone()
+    };
     conn.get_columns_lazy(&schema, &table).await.map_err(|e| e.to_string())
 }
 
@@ -58,11 +61,12 @@ pub async fn describe_table(
     table: String,
     state: State<'_, AppState>,
 ) -> Result<TableStructure, String> {
-    let connections = state.connections.lock().await;
-    let conn = connections.get(&tab_id)
-        .ok_or_else(|| "No active connection".to_string())?
-        .clone();
-    drop(connections);
+    let conn = {
+        let tabs = state.tabs.lock().await;
+        tabs.get(&tab_id)
+            .ok_or_else(|| "No active connection".to_string())?
+            .connection.clone()
+    };
     conn.describe_table(&schema, &table).await.map_err(|e| e.to_string())
 }
 
@@ -74,9 +78,10 @@ pub async fn get_completions(
 ) -> Result<Vec<String>, String> {
     use crate::schema_ops::SchemaOperations;
 
-    let connections = state.connections.lock().await;
-    let conn = connections.get(&tab_id).cloned();
-    drop(connections);
+    let conn = {
+        let tabs = state.tabs.lock().await;
+        tabs.get(&tab_id).map(|ctx| ctx.connection.clone())
+    };
 
     let mut ops = SchemaOperations::new();
 

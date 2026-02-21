@@ -14,7 +14,7 @@ export function SchemaTree({ tabId }: SchemaTreeProps) {
   const { activeTab } = useWorkspace();
 
   const schemasQuery = useQuery({
-    queryKey: ["schemas", tabId],
+    queryKey: [tabId, "schemas"],
     queryFn: () => api.schema.getNames(tabId),
     enabled: activeTab.connectionName !== null,
   });
@@ -53,7 +53,7 @@ function SchemaNode({ schema, tabId }: { schema: string; tabId: number }) {
   const [expanded, setExpanded] = useState(false);
 
   const tablesQuery = useQuery({
-    queryKey: ["tables", tabId, schema],
+    queryKey: [tabId, "tables", schema],
     queryFn: () => api.schema.getTables(tabId, schema),
     enabled: expanded,
   });
@@ -97,7 +97,7 @@ function TableNode({
   const { insertSql } = useWorkspace();
 
   const columnsQuery = useQuery({
-    queryKey: ["columns", tabId, schema, table.name],
+    queryKey: [tabId, "columns", schema, table.name],
     queryFn: () => api.schema.getColumns(tabId, schema, table.name),
     enabled: expanded,
   });

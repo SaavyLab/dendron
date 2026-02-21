@@ -62,45 +62,9 @@ impl DatabaseConnection {
             ConnectionConfig::Sqlite { path, .. } => {
                 let conn_str = format!("sqlite:{}?mode=rwc", path.display());
                 let pool = sqlx::SqlitePool::connect(&conn_str).await?;
-                Self::init_demo_sqlite(&pool).await?;
                 Ok(DatabaseConnection::Sqlite(pool))
             }
         }
-    }
-
-    async fn init_demo_sqlite(pool: &sqlx::SqlitePool) -> Result<()> {
-        sqlx::query(
-            "CREATE TABLE IF NOT EXISTS users (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL,
-                email TEXT UNIQUE,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-            )"
-        ).execute(pool).await?;
-
-        sqlx::query(
-            "CREATE TABLE IF NOT EXISTS orders (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER REFERENCES users(id),
-                amount REAL NOT NULL,
-                status TEXT DEFAULT 'pending',
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-            )"
-        ).execute(pool).await?;
-
-        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM users")
-            .fetch_one(pool).await?;
-
-        if count.0 == 0 {
-            sqlx::query("INSERT INTO users (name, email) VALUES ('Alice', 'alice@example.com')").execute(pool).await?;
-            sqlx::query("INSERT INTO users (name, email) VALUES ('Bob', 'bob@example.com')").execute(pool).await?;
-            sqlx::query("INSERT INTO users (name, email) VALUES ('Charlie', 'charlie@example.com')").execute(pool).await?;
-            sqlx::query("INSERT INTO orders (user_id, amount, status) VALUES (1, 99.99, 'completed')").execute(pool).await?;
-            sqlx::query("INSERT INTO orders (user_id, amount, status) VALUES (1, 149.50, 'pending')").execute(pool).await?;
-            sqlx::query("INSERT INTO orders (user_id, amount, status) VALUES (2, 25.00, 'completed')").execute(pool).await?;
-        }
-
-        Ok(())
     }
 
     pub async fn test_connection(config: &ConnectionConfig) -> Result<()> {

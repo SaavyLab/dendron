@@ -16,7 +16,6 @@ import { tags } from "@lezer/highlight";
 import { api } from "@/lib/tauri";
 import { Button } from "@/components/ui/Button";
 import { Spinner } from "@/components/ui/Spinner";
-import { cn } from "@/lib/utils";
 
 export interface QueryEditorHandle {
   setValue: (sql: string) => void;
@@ -197,7 +196,7 @@ export const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(
             }
           }
 
-          view.dispatch({
+          view?.dispatch({
             effects: sqlCompartment.current.reconfigure(
               sql({ dialect: StandardSQL, schema: schemaMap, defaultSchema: schemaNames[0] })
             ),

@@ -1,12 +1,11 @@
 //! Tauri commands for connection management
 
-use std::sync::Arc;
 use tauri::State;
 use serde::{Deserialize, Serialize};
 
 use crate::config::SavedConnection;
 use crate::db::connection::{ConnectionConfig, DatabaseConnection};
-use crate::state::AppState;
+use crate::state::{AppState, TabContext};
 
 /// Serializable connection info for the frontend
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -93,20 +92,29 @@ pub async fn connect(
         .ok_or_else(|| format!("Connection '{}' not found", name))?;
 
     let conn_config = saved_to_connection_config(saved)?;
+    let connection_name = saved.name().to_string();
+    let is_dangerous = saved.is_dangerous();
     drop(config);
 
+    // Connect outside the tabs lock — this is the async part.
     let db_conn = DatabaseConnection::connect(&conn_config).await
         .map_err(|e| e.to_string())?;
 
-    let mut connections = state.connections.lock().await;
-    connections.insert(tab_id, Arc::new(db_conn));
+    let mut tabs = state.tabs.lock().await;
+    if let Some(ctx) = tabs.get_mut(&tab_id) {
+        ctx.swap_connection(db_conn, connection_name, is_dangerous);
+    } else {
+        tabs.insert(tab_id, TabContext::new(db_conn, connection_name, is_dangerous));
+    }
     Ok(())
 }
 
 #[tauri::command]
 pub async fn disconnect(tab_id: u32, state: State<'_, AppState>) -> Result<(), String> {
-    let mut connections = state.connections.lock().await;
-    connections.remove(&tab_id);
+    let mut tabs = state.tabs.lock().await;
+    if let Some(mut ctx) = tabs.remove(&tab_id) {
+        ctx.cancel_current_query();
+    }
     Ok(())
 }
 

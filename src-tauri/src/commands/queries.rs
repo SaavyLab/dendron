@@ -1,7 +1,6 @@
 //! Tauri commands for query execution
 
 use tauri::State;
-use tokio_util::sync::CancellationToken;
 
 use crate::db::postgres::QueryResult;
 use crate::query::QuerySafetyCheck;
@@ -13,36 +12,37 @@ pub async fn execute_query(
     sql: String,
     state: State<'_, AppState>,
 ) -> Result<QueryResult, String> {
-    let connections = state.connections.lock().await;
-    let conn = connections.get(&tab_id)
-        .ok_or_else(|| "No active connection for this tab".to_string())?
-        .clone();
-    drop(connections);
-
-    // Create a cancellation token for this query
-    let token = CancellationToken::new();
-    {
-        let mut tokens = state.cancel_tokens.lock().await;
-        tokens.insert(tab_id, token.clone());
-    }
+    // Extract connection and register the query — drop the lock before any await.
+    let (conn, token, query_id) = {
+        let mut tabs = state.tabs.lock().await;
+        let ctx = tabs
+            .get_mut(&tab_id)
+            .ok_or_else(|| "No active connection for this tab".to_string())?;
+        let (token, query_id) = ctx.start_query();
+        (ctx.connection.clone(), token, query_id)
+    };
 
     let result = tokio::select! {
         res = conn.execute_query(&sql) => res.map_err(|e| e.to_string()),
         _ = token.cancelled() => Err("Query was cancelled".to_string()),
     };
 
-    // Remove the token when done
-    let mut tokens = state.cancel_tokens.lock().await;
-    tokens.remove(&tab_id);
+    // Clear the token only if our generation is still current.
+    {
+        let mut tabs = state.tabs.lock().await;
+        if let Some(ctx) = tabs.get_mut(&tab_id) {
+            ctx.finish_query(query_id);
+        }
+    }
 
     result
 }
 
 #[tauri::command]
 pub async fn cancel_query(tab_id: u32, state: State<'_, AppState>) -> Result<(), String> {
-    let tokens = state.cancel_tokens.lock().await;
-    if let Some(token) = tokens.get(&tab_id) {
-        token.cancel();
+    let mut tabs = state.tabs.lock().await;
+    if let Some(ctx) = tabs.get_mut(&tab_id) {
+        ctx.cancel_current_query();
     }
     Ok(())
 }
@@ -53,15 +53,14 @@ pub async fn check_query_safety(
     tab_id: u32,
     state: State<'_, AppState>,
 ) -> Result<QuerySafetyCheck, String> {
-    let _config = state.config.lock().await;
-    let connections = state.connections.lock().await;
-
-    let is_connected = connections.contains_key(&tab_id);
-    if !is_connected {
+    let tabs = state.tabs.lock().await;
+    let Some(ctx) = tabs.get(&tab_id) else {
         return Ok(QuerySafetyCheck::check(&sql, "unknown", false));
-    }
-
-    Ok(QuerySafetyCheck::check(&sql, "current", false))
+    };
+    let connection_name = ctx.connection_name.clone();
+    let is_dangerous = ctx.is_dangerous;
+    drop(tabs);
+    Ok(QuerySafetyCheck::check(&sql, &connection_name, is_dangerous))
 }
 
 #[tauri::command]

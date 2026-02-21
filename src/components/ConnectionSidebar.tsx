@@ -24,7 +24,7 @@ export function ConnectionSidebar() {
     try {
       await api.connections.connect(conn.name, activeTab.id);
       updateTab(activeTab.id, { connectionName: conn.name, label: conn.name });
-      queryClient.invalidateQueries({ queryKey: ["schemas", activeTab.id] });
+      queryClient.removeQueries({ queryKey: [activeTab.id] });
     } catch (e) {
       setErrorMsg(e instanceof Error ? e.message : String(e));
     } finally {
@@ -36,7 +36,7 @@ export function ConnectionSidebar() {
     try {
       await api.connections.disconnect(activeTab.id);
       updateTab(activeTab.id, { connectionName: null, label: `Query ${activeTab.id}` });
-      queryClient.removeQueries({ queryKey: ["schemas", activeTab.id] });
+      queryClient.removeQueries({ queryKey: [activeTab.id] });
     } catch {
       // ignore
     }
