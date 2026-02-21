@@ -22,6 +22,7 @@ These are friction points you'd hit constantly. Do these first.
 
 ## P1 — Important for real use
 
+- [ ] **Custom right-click context menus** — override the default browser/webview context menu everywhere; results table (copy cell, copy row as JSON/CSV, copy as INSERT), schema tree (copy table name, generate SELECT, inspect), editor (format, explain); own the full UX surface
 - [ ] **Row editing** — click a cell to edit inline, write back via UPDATE; TablePlus's core UX
 - [ ] **Schema tree: indexes + constraints + FKs** — currently only shows columns
 - [ ] **Table browser mode** — browse a table with filter/sort UI without writing SQL

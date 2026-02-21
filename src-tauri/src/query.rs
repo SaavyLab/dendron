@@ -100,6 +100,23 @@ fn analyze_query_fallback(sql: &str) -> QueryType {
     }
 }
 
+pub fn has_top_level_order_by(sql: &str) -> bool {
+    let dialects: Vec<Box<dyn sqlparser::dialect::Dialect>> = vec![
+        Box::new(PostgreSqlDialect {}),
+        Box::new(SQLiteDialect {}),
+        Box::new(GenericDialect {}),
+    ];
+    for dialect in dialects {
+        if let Ok(statements) = Parser::parse_sql(dialect.as_ref(), sql) {
+            return match statements.first() {
+                Some(Statement::Query(q)) => q.order_by.is_some(),
+                _ => true, // non-SELECT: no warning needed
+            };
+        }
+    }
+    true // parse failed: assume fine, no warning
+}
+
 pub fn analyze_multi_statement(sql: &str) -> Vec<QueryType> {
     let dialects: Vec<Box<dyn sqlparser::dialect::Dialect>> = vec![
         Box::new(PostgreSqlDialect {}),

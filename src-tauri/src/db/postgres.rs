@@ -14,10 +14,12 @@ pub struct QueryResult {
     pub row_count: usize,
     pub execution_time_ms: u128,
     pub truncated: bool,
+    #[serde(default)]
+    pub has_order_by: bool,
 }
 
 impl DatabaseConnection {
-    pub async fn execute_query(&self, sql: &str) -> Result<QueryResult> {
+    pub async fn execute_query(&self, sql: &str, has_order_by: bool) -> Result<QueryResult> {
         let start = std::time::Instant::now();
 
         match self {
@@ -139,7 +141,7 @@ impl DatabaseConnection {
                 }).collect();
 
                 let row_count = rows.len();
-                Ok(QueryResult { columns, column_types, rows, row_count, execution_time_ms, truncated })
+                Ok(QueryResult { columns, column_types, rows, row_count, execution_time_ms, truncated, has_order_by })
             }
             DatabaseConnection::Sqlite(pool) => {
                 let mut stream = sqlx::query(sql).fetch(pool);
@@ -197,7 +199,7 @@ impl DatabaseConnection {
                 }).collect();
 
                 let row_count = rows.len();
-                Ok(QueryResult { columns, column_types, rows, row_count, execution_time_ms, truncated })
+                Ok(QueryResult { columns, column_types, rows, row_count, execution_time_ms, truncated, has_order_by })
             }
         }
     }

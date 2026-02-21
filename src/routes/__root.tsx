@@ -111,6 +111,25 @@ function RootLayout() {
     }
   }, [tabs, activeTabId, updateTab]);
 
+  const loadMoreQuery = useCallback(async () => {
+    const tab = tabs.find((t) => t.id === activeTabId);
+    if (!tab || tab.isRunning || !tab.result?.truncated) return;
+    const offset = tab.result.rows.length;
+    try {
+      const page = await api.queries.execute(tab.id, tab.sql, offset);
+      updateTab(tab.id, {
+        result: {
+          ...page,
+          rows: [...tab.result.rows, ...page.rows],
+          row_count: tab.result.rows.length + page.rows.length,
+          has_order_by: tab.result.has_order_by,
+        },
+      });
+    } catch {
+      // Don't clobber existing results on load-more failure
+    }
+  }, [tabs, activeTabId, updateTab]);
+
   const cancelActiveQuery = useCallback(() => {
     const tab = tabs.find((t) => t.id === activeTabId);
     if (!tab) return;
@@ -157,6 +176,7 @@ function RootLayout() {
     closeTab,
     closeActiveTab,
     runActiveQuery,
+    loadMoreQuery,
     cancelActiveQuery,
     insertSql,
     showConnectionDialog,
@@ -210,6 +230,7 @@ function RootLayout() {
                     result={activeTab.result}
                     error={activeTab.error}
                     isRunning={activeTab.isRunning}
+                    onLoadMore={loadMoreQuery}
                   />
                 </Panel>
               </PanelGroup>

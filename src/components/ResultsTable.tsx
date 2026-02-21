@@ -18,12 +18,13 @@ interface ResultsTableProps {
   result: QueryResult | null;
   error: string | null;
   isRunning: boolean;
+  onLoadMore: () => Promise<void>;
 }
 
 const ROW_HEIGHT = 28;
 const HEADER_HEIGHT = 28;
 
-export function ResultsTable({ result, error, isRunning }: ResultsTableProps) {
+export function ResultsTable({ result, error, isRunning, onLoadMore }: ResultsTableProps) {
   if (isRunning) {
     return (
       <div className="flex flex-col h-full overflow-hidden" style={{ background: "var(--bg-surface)" }}>
@@ -74,16 +75,29 @@ export function ResultsTable({ result, error, isRunning }: ResultsTableProps) {
     );
   }
 
-  return <DataTable result={result} />;
+  return <DataTable result={result} onLoadMore={onLoadMore} />;
 }
 
 function Toolbar({
   result,
   isRunning,
+  onLoadMore,
 }: {
   result?: QueryResult | null;
   isRunning?: boolean;
+  onLoadMore?: () => Promise<void>;
 }) {
+  const [loadingMore, setLoadingMore] = useState(false);
+
+  async function handleLoadMore() {
+    if (!onLoadMore || loadingMore) return;
+    setLoadingMore(true);
+    try {
+      await onLoadMore();
+    } finally {
+      setLoadingMore(false);
+    }
+  }
   async function exportCsv() {
     if (!result) return;
     try {
@@ -129,11 +143,25 @@ function Toolbar({
         </span>
       )}
 
-      {result?.truncated && (
-        <Badge variant="warning">Truncated</Badge>
+      {result?.truncated && !result.has_order_by && (
+        <span title="Results may shift between pages without ORDER BY">
+          <Badge variant="warning">No ORDER BY</Badge>
+        </span>
       )}
 
       <div className="flex-1" />
+
+      {result?.truncated && (
+        <Button
+          variant="ghost"
+          size="xs"
+          onClick={handleLoadMore}
+          disabled={loadingMore}
+          title="Load next 1000 rows"
+        >
+          {loadingMore ? "Loading…" : "Load more"}
+        </Button>
+      )}
 
       {result && (
         <div className="flex items-center gap-1">
@@ -157,7 +185,7 @@ interface SelectedCell {
   value: string;
 }
 
-function DataTable({ result }: { result: QueryResult }) {
+function DataTable({ result, onLoadMore }: { result: QueryResult; onLoadMore?: () => Promise<void> }) {
   const parentRef = useRef<HTMLDivElement>(null);
   const [selectedCell, setSelectedCell] = useState<SelectedCell | null>(null);
 
@@ -217,7 +245,7 @@ function DataTable({ result }: { result: QueryResult }) {
 
   return (
     <div className="flex flex-col h-full overflow-hidden" style={{ background: "var(--bg-surface)" }}>
-      <Toolbar result={result} />
+      <Toolbar result={result} onLoadMore={onLoadMore} />
 
       {/* Scrollable area */}
       <div

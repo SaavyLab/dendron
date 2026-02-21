@@ -30,8 +30,8 @@ export const api = {
   },
 
   queries: {
-    execute: (tabId: number, sql: string) =>
-      invoke<QueryResult>("execute_query", { tabId, sql }),
+    execute: (tabId: number, sql: string, offset?: number) =>
+      invoke<QueryResult>("execute_query", { tabId, sql, offset }),
 
     cancel: (tabId: number) => invoke<void>("cancel_query", { tabId }),
 

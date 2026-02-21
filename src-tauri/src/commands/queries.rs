@@ -2,16 +2,26 @@
 
 use tauri::State;
 
-use crate::db::postgres::QueryResult;
-use crate::query::QuerySafetyCheck;
+use crate::db::postgres::{QueryResult, DEFAULT_ROW_LIMIT};
+use crate::query::{QuerySafetyCheck, QueryType, analyze_query, has_top_level_order_by};
 use crate::state::AppState;
 
 #[tauri::command]
 pub async fn execute_query(
     tab_id: u32,
     sql: String,
+    offset: Option<u64>,
     state: State<'_, AppState>,
 ) -> Result<QueryResult, String> {
+    let offset = offset.unwrap_or(0);
+    let is_select = analyze_query(&sql) == QueryType::Select;
+    let has_order_by = if is_select { has_top_level_order_by(&sql) } else { true };
+    let effective_sql = if is_select {
+        format!("SELECT * FROM ({sql}) q LIMIT {} OFFSET {offset}", DEFAULT_ROW_LIMIT + 1)
+    } else {
+        sql
+    };
+
     // Extract connection and register the query — drop the lock before any await.
     let (conn, token, query_id) = {
         let mut tabs = state.tabs.lock().await;
@@ -23,7 +33,7 @@ pub async fn execute_query(
     };
 
     let result = tokio::select! {
-        res = conn.execute_query(&sql) => res.map_err(|e| e.to_string()),
+        res = conn.execute_query(&effective_sql, has_order_by) => res.map_err(|e| e.to_string()),
         _ = token.cancelled() => Err("Query was cancelled".to_string()),
     };
 

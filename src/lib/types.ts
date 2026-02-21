@@ -7,6 +7,7 @@ export interface QueryResult {
   row_count: number;
   execution_time_ms: number;
   truncated: boolean;
+  has_order_by: boolean;
 }
 
 export interface ColumnInfo {

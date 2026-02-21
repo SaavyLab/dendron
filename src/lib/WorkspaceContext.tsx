@@ -10,6 +10,7 @@ export interface WorkspaceContextValue {
   closeTab: (id: number) => void;
   closeActiveTab: () => void;
   runActiveQuery: () => Promise<void>;
+  loadMoreQuery: () => Promise<void>;
   cancelActiveQuery: () => void;
   insertSql: (sql: string) => void;
   showConnectionDialog: boolean;
