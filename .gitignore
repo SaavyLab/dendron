@@ -22,3 +22,8 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Dev databases
+dev/*.sqlite
+dev/*.sqlite-shm
+dev/*.sqlite-wal
