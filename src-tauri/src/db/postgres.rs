@@ -81,12 +81,56 @@ impl DatabaseConnection {
                                     row.try_get::<i16, _>(i).ok().map(|v| v.to_string()),
                                 "FLOAT4" =>
                                     row.try_get::<f32, _>(i).ok().map(|v| v.to_string()),
+                                "NUMERIC" | "DECIMAL" =>
+                                    row.try_get::<rust_decimal::Decimal, _>(i).ok().map(|v| v.to_string()),
+                                "INET" | "CIDR" =>
+                                    // Binary format: family(1) bits(1) is_cidr(1) addr_len(1) addr(N)
+                                    row.try_get_unchecked::<Vec<u8>, _>(i).ok().and_then(|bytes| {
+                                        if bytes.len() < 4 { return None; }
+                                        let family = bytes[0];
+                                        let bits = bytes[1];
+                                        let is_cidr = bytes[2];
+                                        let addr_len = bytes[3] as usize;
+                                        if bytes.len() < 4 + addr_len { return None; }
+                                        let addr = &bytes[4..4 + addr_len];
+                                        match (family, addr_len) {
+                                            (2, 4) => {
+                                                let ip = format!("{}.{}.{}.{}", addr[0], addr[1], addr[2], addr[3]);
+                                                if is_cidr != 0 || bits != 32 { Some(format!("{ip}/{bits}")) } else { Some(ip) }
+                                            }
+                                            (3, 16) => {
+                                                let ip = addr.chunks_exact(2)
+                                                    .map(|c| format!("{:x}", u16::from_be_bytes([c[0], c[1]])))
+                                                    .collect::<Vec<_>>().join(":");
+                                                if is_cidr != 0 || bits != 128 { Some(format!("{ip}/{bits}")) } else { Some(ip) }
+                                            }
+                                            _ => None,
+                                        }
+                                    }),
+                                "MACADDR" =>
+                                    row.try_get_unchecked::<Vec<u8>, _>(i).ok().and_then(|bytes| {
+                                        if bytes.len() == 6 {
+                                            Some(bytes.iter().map(|b| format!("{b:02x}")).collect::<Vec<_>>().join(":"))
+                                        } else { None }
+                                    }),
+                                "MACADDR8" =>
+                                    row.try_get_unchecked::<Vec<u8>, _>(i).ok().and_then(|bytes| {
+                                        if bytes.len() == 8 {
+                                            Some(bytes.iter().map(|b| format!("{b:02x}")).collect::<Vec<_>>().join(":"))
+                                        } else { None }
+                                    }),
                                 _ =>
                                     row.try_get::<String, _>(i).ok()
                                         .or_else(|| row.try_get::<i64, _>(i).map(|v| v.to_string()).ok())
                                         .or_else(|| row.try_get::<i32, _>(i).map(|v| v.to_string()).ok())
                                         .or_else(|| row.try_get::<f64, _>(i).map(|v| v.to_string()).ok())
-                                        .or_else(|| row.try_get::<bool, _>(i).map(|v| v.to_string()).ok()),
+                                        .or_else(|| row.try_get::<bool, _>(i).map(|v| v.to_string()).ok())
+                                        // Custom enum / domain types: postgres wire-encodes them as
+                                        // plain UTF-8 bytes, so try an unchecked String decode.
+                                        // Filter out null bytes to avoid garbage from binary types
+                                        // (OID/interval/etc. typically contain 0x00 bytes).
+                                        .or_else(|| row.try_get_unchecked::<String, _>(i).ok()
+                                            .filter(|s| !s.contains('\0'))),
                             }
                         });
 

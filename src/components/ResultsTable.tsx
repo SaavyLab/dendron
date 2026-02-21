@@ -1,4 +1,4 @@
-import { useRef, useMemo, useState, useEffect } from "react";
+import { useRef, useMemo, useState, useEffect, type ReactNode } from "react";
 import {
   useReactTable,
   getCoreRowModel,
@@ -209,6 +209,12 @@ function DataTable({ result }: { result: QueryResult }) {
   const totalSize = rowVirtualizer.getTotalSize();
   const tableWidth = table.getCenterTotalSize();
 
+  useEffect(() => {
+    if (selectedCell !== null) {
+      rowVirtualizer.scrollToIndex(selectedCell.rowIdx, { align: "auto" });
+    }
+  }, [selectedCell, rowVirtualizer]);
+
   return (
     <div className="flex flex-col h-full overflow-hidden" style={{ background: "var(--bg-surface)" }}>
       <Toolbar result={result} />
@@ -351,6 +357,45 @@ function DataTable({ result }: { result: QueryResult }) {
   );
 }
 
+const JSON_TOKEN_RE =
+  /("(?:[^"\\]|\\.)*")|(true|false)|(null)|(-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?)|([{}[\],:])|(\s+)/g;
+
+function highlightJson(text: string) {
+  const parts: ReactNode[] = [];
+  let last = 0;
+  let m: RegExpExecArray | null;
+  JSON_TOKEN_RE.lastIndex = 0;
+  while ((m = JSON_TOKEN_RE.exec(text)) !== null) {
+    if (m.index > last) parts.push(text.slice(last, m.index));
+    last = m.index + m[0].length;
+    const [, str, bool, nul, num, punct] = m;
+    if (str) {
+      const isKey = text.slice(last).trimStart().startsWith(":");
+      parts.push(
+        <span key={m.index} style={{ color: isKey ? "#7dd3fc" : "#86efac" }}>
+          {m[0]}
+        </span>
+      );
+    } else if (num) {
+      parts.push(<span key={m.index} style={{ color: "#fcd34d" }}>{m[0]}</span>);
+    } else if (bool) {
+      parts.push(<span key={m.index} style={{ color: "#f9a8d4" }}>{m[0]}</span>);
+    } else if (nul) {
+      parts.push(
+        <span key={m.index} style={{ color: "var(--text-muted)", fontStyle: "italic" }}>
+          {m[0]}
+        </span>
+      );
+    } else if (punct) {
+      parts.push(<span key={m.index} style={{ color: "var(--text-secondary)" }}>{m[0]}</span>);
+    } else {
+      parts.push(m[0]);
+    }
+  }
+  if (last < text.length) parts.push(text.slice(last));
+  return <>{parts}</>;
+}
+
 function CellDetailPanel({
   cell,
   onClose,
@@ -358,6 +403,8 @@ function CellDetailPanel({
   cell: SelectedCell;
   onClose: () => void;
 }) {
+  const [height, setHeight] = useState(200);
+
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.key === "Escape") onClose();
@@ -366,7 +413,35 @@ function CellDetailPanel({
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
+  function startResize(e: { preventDefault(): void; clientY: number }) {
+    e.preventDefault();
+    const startY = e.clientY;
+    const startH = height;
+    function onMove(ev: MouseEvent) {
+      setHeight(Math.max(80, Math.min(600, startH - (ev.clientY - startY))));
+    }
+    function onUp() {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    }
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  }
+
   const isNull = cell.value === "NULL";
+  const isJson =
+    !isNull &&
+    (cell.type === "JSONB" ||
+      cell.type === "JSON" ||
+      ((cell.value.startsWith("{") || cell.value.startsWith("[")) &&
+        (() => {
+          try {
+            JSON.parse(cell.value);
+            return true;
+          } catch {
+            return false;
+          }
+        })()));
 
   async function copy() {
     await navigator.clipboard.writeText(isNull ? "" : cell.value);
@@ -374,9 +449,18 @@ function CellDetailPanel({
 
   return (
     <div
-      className="shrink-0 flex flex-col border-t"
-      style={{ height: "140px", background: "var(--bg-elevated)", borderColor: "var(--border)" }}
+      className="shrink-0 flex flex-col"
+      style={{ height: `${height}px`, background: "var(--bg-elevated)" }}
     >
+      {/* Resize handle */}
+      <div
+        className="shrink-0 border-t"
+        style={{ height: "5px", cursor: "ns-resize", borderColor: "var(--border)", flexShrink: 0 }}
+        onMouseDown={startResize}
+        onMouseEnter={(e) => ((e.currentTarget as HTMLDivElement).style.borderColor = "var(--accent)")}
+        onMouseLeave={(e) => ((e.currentTarget as HTMLDivElement).style.borderColor = "var(--border)")}
+      />
+
       {/* Header */}
       <div
         className="flex items-center gap-2 px-2 shrink-0 border-b"
@@ -458,7 +542,7 @@ function CellDetailPanel({
           fontStyle: isNull ? "italic" : "normal",
         }}
       >
-        {isNull ? "NULL" : cell.value}
+        {isNull ? "NULL" : isJson ? highlightJson(cell.value) : cell.value}
       </div>
     </div>
   );

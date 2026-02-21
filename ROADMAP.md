@@ -13,8 +13,8 @@ These are friction points you'd hit constantly. Do these first.
 - [x] **Remove SQLite demo seeding from app** — `init_demo_sqlite()` was silently mutating user DBs on every connect; dev data lives in seed scripts
 - [x] **Fix safety confirmation DB type** — `check_query_safety` was passing hardcoded `false`/`"current"`, so the destructive-query modal was never shown; now passes real dialect and connected state
 - [x] **Result streaming with row cap** — replaced `fetch_all` with a `fetch()` stream that breaks at 1001 rows, capping memory at `DEFAULT_ROW_LIMIT + 1` rows regardless of table size
-- [x] **Non-text column type decoding** — timestamps (TIMESTAMP/TIMESTAMPTZ→RFC3339/ISO), UUIDs, SMALLINT, FLOAT4, BYTEA (hex), BLOB; unknown types show `<type_name>` instead of `<binary>`
-- [x] **Cell detail view** — click any cell to open a bottom panel with the full untruncated value, column name + type badge, copy button, ESC to close
+- [x] **Non-text column type decoding** — timestamps (TIMESTAMP/TIMESTAMPTZ→RFC3339/ISO), UUIDs, SMALLINT, FLOAT4, NUMERIC/DECIMAL, BYTEA/BLOB (hex), INET/CIDR (dotted-decimal or colon-hex + prefix), MACADDR/MACADDR8; custom enum/domain types decoded via wire bytes; unknown types show `<type_name>`
+- [x] **Cell detail view** — click any cell to open a bottom panel with the full untruncated value, column name + type badge, copy button, ESC to close; panel is resizable (drag top border); JSONB/JSON values get syntax highlighting (keys, strings, numbers, booleans, null); clicking a cell auto-scrolls it into view
 - [ ] **Result pagination** — 1000-row hard limit with just a "Truncated" badge; needs next/prev page or offset controls
 - [ ] **Copy from results** — keyboard-driven copy of cell value or full row (Cmd/Ctrl+C on selection)
 
