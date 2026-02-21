@@ -9,7 +9,7 @@ Tracking what needs to happen before dendron can replace TablePlus/DataGrip as a
 These are friction points you'd hit constantly. Do these first.
 
 - [x] **Resizable editor/results split** — draggable vertical and horizontal panel splits via react-resizable-panels
-- [ ] **SQL autocomplete** — `get_completions` backend command exists but isn't wired into CodeMirror
+- [x] **SQL autocomplete** — context-aware via `@codemirror/lang-sql` schema option + Compartment; schema fetched once on connect
 - [ ] **Cell detail view** — click a cell to open a panel with the full value (critical for JSON, long text, arrays)
 - [ ] **Result pagination** — 1000-row hard limit with just a "Truncated" badge; needs next/prev page or offset controls
 - [ ] **Copy from results** — keyboard-driven copy of cell value or full row (Cmd/Ctrl+C on selection)

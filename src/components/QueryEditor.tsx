@@ -7,7 +7,7 @@ import {
 } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { EditorView, keymap } from "@codemirror/view";
-import { EditorState } from "@codemirror/state";
+import { EditorState, Compartment } from "@codemirror/state";
 import { Prec } from "@codemirror/state";
 import { basicSetup } from "codemirror";
 import { sql, StandardSQL } from "@codemirror/lang-sql";
@@ -23,6 +23,7 @@ export interface QueryEditorHandle {
 }
 
 interface QueryEditorProps {
+  tabId: number;
   defaultValue: string;
   onValueChange: (value: string) => void;
   onRun: () => void;
@@ -96,9 +97,10 @@ const dendronHighlight = syntaxHighlighting(
 
 // ── Component ────────────────────────────────────────────────
 export const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(
-  ({ defaultValue, onValueChange, onRun, onCancel, isRunning, connectionName }, ref) => {
+  ({ tabId, defaultValue, onValueChange, onRun, onCancel, isRunning, connectionName }, ref) => {
     const containerRef = useRef<HTMLDivElement>(null);
     const viewRef = useRef<EditorView | null>(null);
+    const sqlCompartment = useRef(new Compartment());
     const [showHistory, setShowHistory] = useState(false);
 
     const historyQuery = useQuery({
@@ -118,6 +120,7 @@ export const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(
       },
     }));
 
+    // ── Editor init (mount only) ──────────────────────────────
     useEffect(() => {
       if (!containerRef.current) return;
 
@@ -126,7 +129,7 @@ export const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(
           doc: defaultValue,
           extensions: [
             basicSetup,
-            sql({ dialect: StandardSQL }),
+            sqlCompartment.current.of(sql({ dialect: StandardSQL })),
             dendronTheme,
             dendronHighlight,
             Prec.highest(
@@ -160,6 +163,53 @@ export const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(
       // Only run on mount — key prop handles tab switching
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
+
+    // ── Schema loading for autocomplete ──────────────────────
+    useEffect(() => {
+      const view = viewRef.current;
+      if (!view) return;
+
+      if (!connectionName) {
+        view.dispatch({
+          effects: sqlCompartment.current.reconfigure(sql({ dialect: StandardSQL })),
+        });
+        return;
+      }
+
+      let cancelled = false;
+
+      async function loadSchema() {
+        try {
+          const schemaNames = await api.schema.getNames(tabId);
+          if (cancelled) return;
+
+          const schemaMap: Record<string, Record<string, string[]>> = {};
+
+          for (const schemaName of schemaNames) {
+            const tables = await api.schema.getTables(tabId, schemaName);
+            if (cancelled) return;
+
+            schemaMap[schemaName] = {};
+            for (const table of tables) {
+              const columns = await api.schema.getColumns(tabId, schemaName, table.name);
+              if (cancelled) return;
+              schemaMap[schemaName][table.name] = columns.map(c => c.name);
+            }
+          }
+
+          view.dispatch({
+            effects: sqlCompartment.current.reconfigure(
+              sql({ dialect: StandardSQL, schema: schemaMap, defaultSchema: schemaNames[0] })
+            ),
+          });
+        } catch {
+          // no-op — completions just won't include schema items
+        }
+      }
+
+      loadSchema();
+      return () => { cancelled = true; };
+    }, [connectionName, tabId]);
 
     function insertHistoryQuery(query: string) {
       viewRef.current?.dispatch({
