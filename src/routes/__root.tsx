@@ -1,5 +1,6 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import { createRootRoute, Outlet } from "@tanstack/react-router";
+import { Group as PanelGroup, Panel, Separator as PanelResizeHandle } from "react-resizable-panels";
 import { WorkspaceContext, type WorkspaceContextValue } from "@/lib/WorkspaceContext";
 import type { Tab } from "@/lib/types";
 import { api } from "@/lib/tauri";
@@ -160,61 +161,57 @@ function RootLayout() {
   return (
     <WorkspaceContext.Provider value={ctxValue}>
       <div
-        className="flex h-full w-full overflow-hidden"
+        className="flex flex-col h-full w-full overflow-hidden"
         style={{ background: "var(--bg-base)" }}
       >
-        {/* ── Sidebar ─────────────────────────────────────── */}
-        <div
-          className="flex flex-col shrink-0 border-r overflow-hidden"
-          style={{
-            width: "var(--sidebar-width)",
-            borderColor: "var(--border)",
-            background: "var(--bg-surface)",
-          }}
-        >
-          <ConnectionSidebar />
-        </div>
-
-        {/* ── Main workspace ──────────────────────────────── */}
-        <div className="flex flex-col flex-1 overflow-hidden">
-          {/* Tab bar */}
-          <TabBar />
-
-          {/* Editor + Results */}
-          <div className="flex flex-col flex-1 overflow-hidden">
-            {/* Editor — fixed 40% height */}
+        <PanelGroup orientation="horizontal" className="flex-1 overflow-hidden">
+          {/* ── Sidebar ───────────────────────────────────── */}
+          <Panel defaultSize={18} minSize={10}>
             <div
-              className="shrink-0 border-b overflow-hidden"
-              style={{
-                height: "40%",
-                borderColor: "var(--border)",
-              }}
+              className="flex flex-col h-full overflow-hidden border-r"
+              style={{ borderColor: "var(--border)", background: "var(--bg-surface)" }}
             >
-              <QueryEditor
-                key={activeTab.id}
-                ref={editorRef}
-                defaultValue={activeTab.sql}
-                onValueChange={(sql) => updateTab(activeTab.id, { sql })}
-                onRun={runActiveQuery}
-                onCancel={cancelActiveQuery}
-                isRunning={activeTab.isRunning}
-                connectionName={activeTab.connectionName}
-              />
+              <ConnectionSidebar />
             </div>
+          </Panel>
 
-            {/* Results — fills remaining space */}
-            <div className="flex-1 overflow-hidden">
-              <ResultsTable
-                result={activeTab.result}
-                error={activeTab.error}
-                isRunning={activeTab.isRunning}
-              />
+          <PanelResizeHandle className="resize-handle-v" />
+
+          {/* ── Main workspace ────────────────────────────── */}
+          <Panel minSize={30}>
+            <div className="flex flex-col h-full overflow-hidden">
+              <TabBar />
+
+              <PanelGroup orientation="vertical" className="flex-1 overflow-hidden">
+                <Panel defaultSize={40} minSize={15}>
+                  <QueryEditor
+                    key={activeTab.id}
+                    ref={editorRef}
+                    defaultValue={activeTab.sql}
+                    onValueChange={(sql) => updateTab(activeTab.id, { sql })}
+                    onRun={runActiveQuery}
+                    onCancel={cancelActiveQuery}
+                    isRunning={activeTab.isRunning}
+                    connectionName={activeTab.connectionName}
+                  />
+                </Panel>
+
+                <PanelResizeHandle className="resize-handle-h" />
+
+                <Panel minSize={15}>
+                  <ResultsTable
+                    result={activeTab.result}
+                    error={activeTab.error}
+                    isRunning={activeTab.isRunning}
+                  />
+                </Panel>
+              </PanelGroup>
             </div>
-          </div>
+          </Panel>
+        </PanelGroup>
 
-          {/* Status bar */}
-          <StatusBar />
-        </div>
+        {/* Status bar spans full width */}
+        <StatusBar />
       </div>
 
       {/* Connection dialog */}
