@@ -2,8 +2,8 @@
 
 use tauri::State;
 
-use crate::db::postgres::{QueryResult, DEFAULT_ROW_LIMIT};
-use crate::query::{QuerySafetyCheck, QueryType, analyze_query, has_top_level_order_by};
+use dendron_core::db::postgres::{QueryResult, DEFAULT_ROW_LIMIT};
+use dendron_core::query::{QuerySafetyCheck, QueryType, analyze_query, has_top_level_order_by};
 use crate::state::AppState;
 
 #[tauri::command]

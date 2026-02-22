@@ -2,7 +2,7 @@
 
 use tauri::State;
 
-use crate::db::schema::{ColumnInfo, TableStructure};
+use dendron_core::db::schema::{ColumnInfo, TableStructure};
 use crate::state::AppState;
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
@@ -76,7 +76,7 @@ pub async fn get_completions(
     tab_id: u32,
     state: State<'_, AppState>,
 ) -> Result<Vec<String>, String> {
-    use crate::schema_ops::SchemaOperations;
+    use dendron_core::schema_ops::SchemaOperations;
 
     let conn = {
         let tabs = state.tabs.lock().await;

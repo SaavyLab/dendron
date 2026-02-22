@@ -3,7 +3,7 @@
 use tauri::State;
 use serde::{Deserialize, Serialize};
 
-use crate::config::Settings;
+use dendron_core::config::Settings;
 use crate::state::AppState;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

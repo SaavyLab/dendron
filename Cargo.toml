@@ -1,0 +1,3 @@
+[workspace]
+members = ["dendron-core", "src-tauri"]
+resolver = "2"

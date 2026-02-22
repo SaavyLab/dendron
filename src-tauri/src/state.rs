@@ -5,8 +5,8 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
-use crate::config::Config;
-use crate::db::connection::DatabaseConnection;
+use dendron_core::config::Config;
+use dendron_core::db::connection::DatabaseConnection;
 
 pub struct TabContext {
     pub connection: Arc<DatabaseConnection>,

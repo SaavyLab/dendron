@@ -1,14 +1,5 @@
 pub mod commands;
-pub mod config;
-pub mod db;
-pub mod error;
-pub mod migrations;
-pub mod project;
-pub mod query;
-pub mod schema_ops;
-pub mod security;
 pub mod state;
-pub mod team_config;
 
 use commands::{connections::*, queries::*, schema::*, export::*, config::*};
 use state::AppState;

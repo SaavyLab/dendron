@@ -3,8 +3,8 @@
 use tauri::State;
 use serde::{Deserialize, Serialize};
 
-use crate::config::SavedConnection;
-use crate::db::connection::{ConnectionConfig, DatabaseConnection};
+use dendron_core::config::SavedConnection;
+use dendron_core::db::connection::{ConnectionConfig, DatabaseConnection};
 use crate::state::{AppState, TabContext};
 
 /// Serializable connection info for the frontend
@@ -126,7 +126,7 @@ pub async fn test_connection(conn: ConnectionInfo, password: Option<String>) -> 
 }
 
 fn build_saved_connection(info: &ConnectionInfo, password: Option<String>) -> Result<SavedConnection, String> {
-    use crate::security::EncryptedPassword;
+    use dendron_core::security::EncryptedPassword;
 
     match info.conn_type.as_str() {
         "sqlite" => Ok(SavedConnection::Sqlite {

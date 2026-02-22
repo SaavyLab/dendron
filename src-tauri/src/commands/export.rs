@@ -1,6 +1,6 @@
 //! Tauri commands for exporting query results
 
-use crate::db::postgres::QueryResult;
+use dendron_core::db::postgres::QueryResult;
 
 #[tauri::command]
 pub fn export_csv(results: QueryResult) -> Result<String, String> {
