@@ -15,8 +15,8 @@ export const api = {
   connections: {
     list: () => invoke<ConnectionInfo[]>("list_connections"),
 
-    save: (conn: Omit<ConnectionInfo, "is_dangerous">, password?: string) =>
-      invoke<void>("save_connection", { conn, password }),
+    save: (conn: Omit<ConnectionInfo, "is_dangerous">, password?: string, sshPassphrase?: string) =>
+      invoke<void>("save_connection", { conn, password, sshPassphrase }),
 
     delete: (name: string) => invoke<void>("delete_connection", { name }),
 
@@ -25,8 +25,8 @@ export const api = {
 
     disconnect: (tabId: number) => invoke<void>("disconnect", { tabId }),
 
-    test: (conn: Omit<ConnectionInfo, "is_dangerous">, password?: string) =>
-      invoke<void>("test_connection", { conn, password }),
+    test: (conn: Omit<ConnectionInfo, "is_dangerous">, password?: string, sshPassphrase?: string) =>
+      invoke<void>("test_connection", { conn, password, sshPassphrase }),
   },
 
   queries: {

@@ -15,15 +15,18 @@ These are friction points you'd hit constantly. Do these first.
 - [x] **Result streaming with row cap** — replaced `fetch_all` with a `fetch()` stream that breaks at 1001 rows, capping memory at `DEFAULT_ROW_LIMIT + 1` rows regardless of table size
 - [x] **Non-text column type decoding** — timestamps (TIMESTAMP/TIMESTAMPTZ→RFC3339/ISO), UUIDs, SMALLINT, FLOAT4, NUMERIC/DECIMAL, BYTEA/BLOB (hex), INET/CIDR (dotted-decimal or colon-hex + prefix), MACADDR/MACADDR8; custom enum/domain types decoded via wire bytes; unknown types show `<type_name>`
 - [x] **Cell detail view** — click any cell to open a bottom panel with the full untruncated value, column name + type badge, copy button, ESC to close; panel is resizable (drag top border); JSONB/JSON values get syntax highlighting (keys, strings, numbers, booleans, null); clicking a cell auto-scrolls it into view
-- [ ] **Result pagination** — 1000-row hard limit with just a "Truncated" badge; needs next/prev page or offset controls
+- [x] **Result pagination** — "Load more" appends next 1000 rows; SELECT queries wrapped with LIMIT/OFFSET; "No ORDER BY" drift warning badge
 - [x] **Copy from results** — Cmd/Ctrl+C copies selected cell value when no text is highlighted; export CSV/JSON use native OS save dialog via tauri-plugin-dialog
+- [ ] **SSH tunnel support** — needed for connecting to remote/prod DBs; without this you can't reach any staging or production database safely
 
 ---
 
 ## P1 — Important for real use
 
+- [ ] **Command palette** — `Cmd/Ctrl+P` fuzzy-finder to jump to any database, table, or view without touching the mouse; the "open anything" loop
 - [ ] **Custom right-click context menus** — override the default browser/webview context menu everywhere; results table (copy cell, copy row as JSON/CSV, copy as INSERT), schema tree (copy table name, generate SELECT, inspect), editor (format, explain); own the full UX surface
 - [ ] **Row editing** — click a cell to edit inline, write back via UPDATE; TablePlus's core UX
+- [ ] **MySQL/MariaDB support** — only Postgres + SQLite right now; MySQL is too common to leave out
 - [ ] **Schema tree: indexes + constraints + FKs** — currently only shows columns
 - [ ] **Table browser mode** — browse a table with filter/sort UI without writing SQL
 - [ ] **Query history timestamps** — history stores queries but not when they ran
@@ -35,9 +38,7 @@ These are friction points you'd hit constantly. Do these first.
 
 ## P2 — Nice to have
 
-- [ ] **MySQL/MariaDB support** — only Postgres + SQLite right now
 - [ ] **SQLite PRAGMA identifier escaping** — table names with single-quotes or unusual characters break schema introspection; fix with double-quote wrapping
-- [ ] **SSH tunnel support** — needed for connecting to remote/prod DBs safely
 - [ ] **SQL formatter** — prettify/format the current query
 - [ ] **EXPLAIN plan view** — visualize query execution plan
 - [ ] **Search in results** — filter/find within a result set
@@ -45,6 +46,33 @@ These are friction points you'd hit constantly. Do these first.
 - [ ] **Connection groups/folders** — organize connections when you have many
 - [ ] **Surface migration framework detection** — the backend detects Django/Rails/Prisma/etc. migrations but the UI doesn't use it yet
 - [ ] **Project / team config UI** — `.dendron.toml` is parsed but not exposed in the UI
+
+---
+
+## Architecture decisions
+
+These are locked-in choices that shape the long-term codebase. Document them here so we don't relitigate them.
+
+### Crate split: `dendron-core` + `dendron-tauri` (planned, not yet implemented)
+
+The Rust backend will be split into two sibling crates at the repo root:
+
+- **`dendron-core/`** — pure Rust, zero Tauri dependencies; owns connection pooling, SSH tunnels, query execution, schema introspection, type decoding, caching. Accepts SQL strings, returns internal structs. Usable from any future host (GPUI, MCP server, CLI).
+- **`src-tauri/`** (becomes `dendron-tauri`) — thin adapter; registers Tauri commands, translates core errors into UI events, owns `AppHandle`. `AppState` → `Workspace` rename to reflect that it's no longer Tauri-specific.
+
+**Why do it now:** the codebase is small, the split is cheap, and the GPUI pivot is very likely. At that point `dendron-tauri` is deleted entirely and replaced with `dendron-gpui` — the core engine is untouched. Doing the split after the codebase grows would be significantly more painful.
+
+**Pivot path:** delete `src-tauri/`, add `dendron-gpui/`, wire `dendron-core` through GPUI primitives. No changes to core query/type/schema logic.
+
+### Binary IPC: explicitly skipped
+
+Tauri 2.0 supports raw `Vec<u8>` IPC + FlatBuffers/rkyv for zero-copy JS deserialization. **We are not doing this.** Reasons:
+
+1. JSON serialization costs ~5ms on large result sets — the database round-trip is 100-1000x that.
+2. It is a Tauri-phase-only optimization: when we pivot to GPUI there is no IPC layer at all (Rust renders directly). Any binary IPC work gets deleted wholesale.
+3. The real rendering bottleneck is DOM virtualization, which TanStack Virtual already handles.
+
+If performance profiling ever reveals IPC as a real bottleneck, revisit. Until then, JSON IPC is correct.
 
 ---
 

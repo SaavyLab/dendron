@@ -60,9 +60,19 @@ pub enum AppError {
     InvalidPort(String),
     #[error("Empty or invalid input: {0}")]
     InvalidInput(String),
+    #[error("SSH connection failed: {0}")]
+    SshConnectionFailed(String),
+    #[error("SSH authentication failed: {0}")]
+    SshAuthFailed(String),
+    #[error("SSH port forwarding failed: {0}")]
+    SshTunnelFailed(String),
+    #[error("SSH host key mismatch for {0} — possible MITM, check known_hosts")]
+    SshHostKeyMismatch(String),
 
     #[error(transparent)]
     Io(#[from] std::io::Error),
+    #[error(transparent)]
+    Russh(#[from] russh::Error),
     #[error(transparent)]
     Database(#[from] sqlx::Error),
     #[error(transparent)]

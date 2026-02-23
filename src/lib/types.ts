@@ -60,6 +60,12 @@ export interface ConnectionInfo {
   username?: string;
   database?: string;
   is_dangerous: boolean;
+  // SSH tunnel (Postgres only)
+  ssh_enabled?: boolean;
+  ssh_host?: string;
+  ssh_port?: number;
+  ssh_username?: string;
+  ssh_key_path?: string;
 }
 
 export interface Settings {

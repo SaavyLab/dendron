@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
+import { open } from "@tauri-apps/plugin-dialog";
 import { api } from "@/lib/tauri";
 import type { ConnectionInfo } from "@/lib/types";
 import { useWorkspace } from "@/lib/WorkspaceContext";
@@ -8,6 +9,7 @@ import { Spinner } from "@/components/ui/Spinner";
 import { cn } from "@/lib/utils";
 
 type DbType = "postgres" | "sqlite";
+type SshAuthType = "agent" | "key";
 
 interface FormState {
   name: string;
@@ -17,6 +19,14 @@ interface FormState {
   username: string;
   password: string;
   path: string;
+  // SSH tunnel
+  useSsh: boolean;
+  sshHost: string;
+  sshPort: string;
+  sshUsername: string;
+  sshAuthType: SshAuthType;
+  sshKeyPath: string;
+  sshPassphrase: string;
 }
 
 const DEFAULTS: FormState = {
@@ -27,6 +37,13 @@ const DEFAULTS: FormState = {
   username: "postgres",
   password: "",
   path: "",
+  useSsh: false,
+  sshHost: "",
+  sshPort: "22",
+  sshUsername: "",
+  sshAuthType: "agent",
+  sshKeyPath: "",
+  sshPassphrase: "",
 };
 
 export function ConnectionDialog() {
@@ -49,9 +66,19 @@ export function ConnectionDialog() {
     return () => window.removeEventListener("keydown", onKey);
   }, [closeConnectionDialog]);
 
-  function update(field: keyof FormState, value: string) {
+  function update(field: keyof FormState, value: string | boolean) {
     setForm((f) => ({ ...f, [field]: value }));
     setTestResult(null);
+  }
+
+  async function browseKeyFile() {
+    const selected = await open({
+      title: "Select SSH private key",
+      multiple: false,
+    });
+    if (typeof selected === "string") {
+      update("sshKeyPath", selected);
+    }
   }
 
   function buildConn(): Omit<ConnectionInfo, "is_dangerous"> {
@@ -64,6 +91,11 @@ export function ConnectionDialog() {
         port: parseInt(form.port, 10) || 5432,
         database: form.database,
         username: form.username,
+        ssh_enabled: form.useSsh,
+        ssh_host: form.useSsh ? form.sshHost : undefined,
+        ssh_port: form.useSsh ? (parseInt(form.sshPort, 10) || 22) : undefined,
+        ssh_username: form.useSsh ? form.sshUsername : undefined,
+        ssh_key_path: (form.useSsh && form.sshAuthType === "key") ? form.sshKeyPath : undefined,
       };
     }
     return {
@@ -74,6 +106,12 @@ export function ConnectionDialog() {
     };
   }
 
+  function sshPassphrase(): string | undefined {
+    return (form.useSsh && form.sshAuthType === "key" && form.sshPassphrase)
+      ? form.sshPassphrase
+      : undefined;
+  }
+
   async function handleTest() {
     if (!form.name.trim()) {
       setTestResult({ ok: false, msg: "Name is required." });
@@ -82,7 +120,11 @@ export function ConnectionDialog() {
     setTesting(true);
     setTestResult(null);
     try {
-      await api.connections.test(buildConn(), dbType === "postgres" ? form.password : undefined);
+      await api.connections.test(
+        buildConn(),
+        dbType === "postgres" ? form.password : undefined,
+        sshPassphrase(),
+      );
       setTestResult({ ok: true, msg: "Connection successful!" });
     } catch (e) {
       setTestResult({ ok: false, msg: e instanceof Error ? e.message : String(e) });
@@ -98,7 +140,11 @@ export function ConnectionDialog() {
     }
     setSaving(true);
     try {
-      await api.connections.save(buildConn(), dbType === "postgres" ? form.password : undefined);
+      await api.connections.save(
+        buildConn(),
+        dbType === "postgres" ? form.password : undefined,
+        sshPassphrase(),
+      );
       queryClient.invalidateQueries({ queryKey: ["connections"] });
       closeConnectionDialog();
     } catch (e) {
@@ -238,6 +284,9 @@ export function ConnectionDialog() {
                   autoComplete="new-password"
                 />
               </Field>
+
+              {/* SSH Tunnel */}
+              <SshSection form={form} update={update} onBrowse={browseKeyFile} />
             </>
           ) : (
             <Field label="File path">
@@ -293,6 +342,182 @@ export function ConnectionDialog() {
     </>
   );
 }
+
+// ── SSH section ────────────────────────────────────────────────────────────────
+
+interface SshSectionProps {
+  form: FormState;
+  update: (field: keyof FormState, value: string | boolean) => void;
+  onBrowse: () => void;
+}
+
+function SshSection({ form, update, onBrowse }: SshSectionProps) {
+  return (
+    <div
+      className="flex flex-col gap-3 rounded"
+      style={{
+        border: "1px solid var(--border)",
+        padding: "10px 12px",
+        background: "var(--bg-overlay)",
+      }}
+    >
+      {/* Toggle row */}
+      <div className="flex items-center justify-between">
+        <span style={{ fontSize: "11px", fontWeight: 500, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em" }}>
+          SSH Tunnel
+        </span>
+        <button
+          onClick={() => update("useSsh", !form.useSsh)}
+          style={{
+            width: "32px",
+            height: "18px",
+            borderRadius: "9px",
+            background: form.useSsh ? "var(--accent)" : "var(--border-strong)",
+            position: "relative",
+            transition: "background 0.15s",
+            flexShrink: 0,
+          }}
+          aria-label="Toggle SSH tunnel"
+        >
+          <span
+            style={{
+              position: "absolute",
+              top: "2px",
+              left: form.useSsh ? "16px" : "2px",
+              width: "14px",
+              height: "14px",
+              borderRadius: "50%",
+              background: "white",
+              transition: "left 0.15s",
+            }}
+          />
+        </button>
+      </div>
+
+      {form.useSsh && (
+        <>
+          <div className="flex gap-2">
+            <Field label="SSH Host" className="flex-1">
+              <input
+                type="text"
+                value={form.sshHost}
+                onChange={(e) => update("sshHost", e.target.value)}
+                placeholder="bastion.example.com"
+              />
+            </Field>
+            <Field label="Port" className="w-20">
+              <input
+                type="text"
+                value={form.sshPort}
+                onChange={(e) => update("sshPort", e.target.value)}
+                placeholder="22"
+              />
+            </Field>
+          </div>
+
+          <Field label="SSH Username">
+            <input
+              type="text"
+              value={form.sshUsername}
+              onChange={(e) => update("sshUsername", e.target.value)}
+              placeholder="ec2-user"
+            />
+          </Field>
+
+          {/* Auth method toggle */}
+          <div className="flex flex-col gap-1">
+            <span style={{ fontSize: "11px", fontWeight: 500, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em" }}>
+              Auth Method
+            </span>
+            <div
+              className="flex rounded overflow-hidden"
+              style={{ background: "var(--bg-elevated)", border: "1px solid var(--border)" }}
+            >
+              {(["agent", "key"] as SshAuthType[]).map((t) => (
+                <button
+                  key={t}
+                  onClick={() => update("sshAuthType", t)}
+                  className={cn(
+                    "flex-1 py-1 text-xs font-medium transition-colors",
+                    form.sshAuthType === t
+                      ? "text-zinc-100"
+                      : "text-[var(--text-muted)] hover:text-[var(--text-secondary)]"
+                  )}
+                  style={
+                    form.sshAuthType === t
+                      ? { background: "var(--bg-overlay)", borderRadius: "2px" }
+                      : {}
+                  }
+                >
+                  {t === "agent" ? "SSH Agent" : "Key File"}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {form.sshAuthType === "key" && (
+            <>
+              {/* Key path with browse button */}
+              <div className="flex flex-col gap-1">
+                <span style={{ fontSize: "11px", fontWeight: 500, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em" }}>
+                  Key Path
+                </span>
+                <div className="flex gap-2">
+                  <div
+                    className="flex items-center px-2.5 rounded transition-colors flex-1"
+                    style={{
+                      height: "32px",
+                      background: "var(--bg-overlay)",
+                      border: "1px solid var(--border-strong)",
+                      fontSize: "13px",
+                      color: "var(--text-primary)",
+                    }}
+                    onFocusCapture={(e) => { (e.currentTarget as HTMLDivElement).style.borderColor = "var(--accent)"; }}
+                    onBlurCapture={(e) => { (e.currentTarget as HTMLDivElement).style.borderColor = "var(--border-strong)"; }}
+                  >
+                    <input
+                      type="text"
+                      value={form.sshKeyPath}
+                      onChange={(e) => update("sshKeyPath", e.target.value)}
+                      placeholder="~/.ssh/id_ed25519"
+                      style={{ fontFamily: "var(--font-mono)", flex: 1, minWidth: 0 }}
+                    />
+                  </div>
+                  <button
+                    onClick={onBrowse}
+                    className="shrink-0 px-2.5 rounded text-xs transition-colors"
+                    style={{
+                      height: "32px",
+                      background: "var(--bg-overlay)",
+                      border: "1px solid var(--border-strong)",
+                      color: "var(--text-muted)",
+                    }}
+                    onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.color = "var(--text-primary)"; }}
+                    onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.color = "var(--text-muted)"; }}
+                  >
+                    Browse
+                  </button>
+                </div>
+              </div>
+
+              <Field label="Passphrase">
+                <input
+                  type="password"
+                  value={form.sshPassphrase}
+                  onChange={(e) => update("sshPassphrase", e.target.value)}
+                  placeholder="(optional)"
+                  autoComplete="new-password"
+                />
+              </Field>
+            </>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+// ── Field ──────────────────────────────────────────────────────────────────────
 
 interface FieldProps {
   label: string;

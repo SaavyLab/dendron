@@ -7,6 +7,7 @@ use tokio_util::sync::CancellationToken;
 
 use dendron_core::config::Config;
 use dendron_core::db::connection::DatabaseConnection;
+use dendron_core::db::ssh::SshTunnel;
 
 pub struct TabContext {
     pub connection: Arc<DatabaseConnection>,
@@ -14,16 +15,23 @@ pub struct TabContext {
     pub is_dangerous: bool,
     cancel_token: Option<CancellationToken>,
     query_id: u64,
+    pub ssh_tunnel: Option<SshTunnel>,
 }
 
 impl TabContext {
-    pub fn new(connection: DatabaseConnection, connection_name: String, is_dangerous: bool) -> Self {
+    pub fn new(
+        connection: DatabaseConnection,
+        connection_name: String,
+        is_dangerous: bool,
+        ssh_tunnel: Option<SshTunnel>,
+    ) -> Self {
         Self {
             connection: Arc::new(connection),
             connection_name,
             is_dangerous,
             cancel_token: None,
             query_id: 0,
+            ssh_tunnel,
         }
     }
 
@@ -54,13 +62,21 @@ impl TabContext {
 
     /// Cancel any in-flight query, bump the generation, and install a new connection.
     /// Any in-flight finish_query from the previous era becomes a no-op because
-    /// query_id no longer matches.
-    pub fn swap_connection(&mut self, new_conn: DatabaseConnection, connection_name: String, is_dangerous: bool) {
+    /// query_id no longer matches.  The old SSH tunnel (if any) is dropped here,
+    /// tearing it down before the new one takes its place.
+    pub fn swap_connection(
+        &mut self,
+        new_conn: DatabaseConnection,
+        connection_name: String,
+        is_dangerous: bool,
+        ssh_tunnel: Option<SshTunnel>,
+    ) {
         self.cancel_current_query();
         self.query_id += 1;
         self.connection = Arc::new(new_conn);
         self.connection_name = connection_name;
         self.is_dangerous = is_dangerous;
+        self.ssh_tunnel = ssh_tunnel;
     }
 }
 

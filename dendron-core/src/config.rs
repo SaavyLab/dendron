@@ -27,6 +27,32 @@ pub struct SavedQuery {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SshConfig {
+    pub host: String,
+    #[serde(default = "default_ssh_port")]
+    pub port: u16,
+    pub username: String,
+    pub auth: SshAuth,
+}
+
+fn default_ssh_port() -> u16 {
+    22
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum SshAuth {
+    #[serde(rename = "agent")]
+    Agent,
+    #[serde(rename = "key")]
+    Key {
+        key_path: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        passphrase: Option<EncryptedPassword>,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum SavedConnection {
     #[serde(rename = "sqlite")]
@@ -49,6 +75,8 @@ pub enum SavedConnection {
         database: String,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         tags: Vec<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        ssh: Option<SshConfig>,
     },
 }
 
@@ -84,6 +112,13 @@ impl SavedConnection {
     pub fn has_tag(&self, tag: &str) -> bool {
         let lower = tag.to_lowercase();
         self.tags().iter().any(|t| t.to_lowercase() == lower)
+    }
+
+    pub fn ssh(&self) -> Option<&SshConfig> {
+        match self {
+            SavedConnection::Postgres { ssh, .. } => ssh.as_ref(),
+            _ => None,
+        }
     }
 
     pub fn get_password(&self) -> String {
