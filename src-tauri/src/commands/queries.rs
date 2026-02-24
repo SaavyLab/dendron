@@ -24,14 +24,18 @@ pub async fn execute_query(
         sql
     };
 
-    // Extract connection and register the query — drop the lock before any await.
+    // Resolve connection + register query — drop all locks before any await.
     let (conn, token, query_id) = {
         let mut tabs = state.tabs.lock().await;
-        let ctx = tabs
-            .get_mut(&tab_id)
+        let ctx = tabs.entry(tab_id).or_default();
+        let conn_name = ctx.connection_name.clone()
             .ok_or_else(|| "No active connection for this tab".to_string())?;
+        let conns = state.connections.lock().await;
+        let open = conns.get(&conn_name)
+            .ok_or_else(|| format!("Connection '{}' is not open", conn_name))?;
+        let conn = open.conn.clone();
         let (token, query_id) = ctx.start_query();
-        (ctx.connection.clone(), token, query_id)
+        (conn, token, query_id)
     };
 
     let result = tokio::select! {
@@ -65,14 +69,21 @@ pub async fn check_query_safety(
     tab_id: u32,
     state: State<'_, AppState>,
 ) -> Result<QuerySafetyCheck, String> {
-    let tabs = state.tabs.lock().await;
-    let Some(ctx) = tabs.get(&tab_id) else {
-        return Ok(QuerySafetyCheck::check(&sql, "unknown", false));
+    // Grab connection_name from the tab (drop lock before next await).
+    let conn_name = {
+        let tabs = state.tabs.lock().await;
+        match tabs.get(&tab_id) {
+            None => return Ok(QuerySafetyCheck::check(&sql, "unknown", false)),
+            Some(ctx) => ctx.connection_name.clone().unwrap_or_default(),
+        }
     };
-    let connection_name = ctx.connection_name.clone();
-    let is_dangerous = ctx.is_dangerous;
-    drop(tabs);
-    Ok(QuerySafetyCheck::check(&sql, &connection_name, is_dangerous))
+
+    let is_dangerous = {
+        let conns = state.connections.lock().await;
+        conns.get(&conn_name).map(|c| c.is_dangerous).unwrap_or(false)
+    };
+
+    Ok(QuerySafetyCheck::check(&sql, &conn_name, is_dangerous))
 }
 
 #[tauri::command]

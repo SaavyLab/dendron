@@ -20,13 +20,21 @@ export const api = {
 
     delete: (name: string) => invoke<void>("delete_connection", { name }),
 
-    connect: (name: string, tabId: number) =>
-      invoke<void>("connect", { name, tabId }),
-
-    disconnect: (tabId: number) => invoke<void>("disconnect", { tabId }),
-
     test: (conn: Omit<ConnectionInfo, "is_dangerous">, password?: string, sshPassphrase?: string) =>
       invoke<void>("test_connection", { conn, password, sshPassphrase }),
+
+    /** Open (or idempotently re-open) an app-level live connection. */
+    open: (name: string) => invoke<void>("open_connection", { name }),
+
+    /** Close (tear down pool + tunnel) an app-level live connection. */
+    close: (name: string) => invoke<void>("close_connection", { name }),
+
+    /** List names of all currently open (live) connections. */
+    listOpen: () => invoke<string[]>("list_open_connections"),
+
+    /** Point a tab at an open connection (or clear with null). */
+    setTabConnection: (tabId: number, connectionName: string | null) =>
+      invoke<void>("set_tab_connection", { tabId, connectionName }),
   },
 
   queries: {
@@ -44,20 +52,20 @@ export const api = {
   },
 
   schema: {
-    getNames: (tabId: number) =>
-      invoke<string[]>("get_schema_names", { tabId }),
+    getNames: (connectionName: string) =>
+      invoke<string[]>("get_schema_names", { connectionName }),
 
-    getTables: (tabId: number, schema: string) =>
-      invoke<TableRow[]>("get_tables", { tabId, schema }),
+    getTables: (connectionName: string, schema: string) =>
+      invoke<TableRow[]>("get_tables", { connectionName, schema }),
 
-    getColumns: (tabId: number, schema: string, table: string) =>
-      invoke<ColumnInfo[]>("get_columns", { tabId, schema, table }),
+    getColumns: (connectionName: string, schema: string, table: string) =>
+      invoke<ColumnInfo[]>("get_columns", { connectionName, schema, table }),
 
-    describe: (tabId: number, schema: string, table: string) =>
-      invoke<TableStructure>("describe_table", { tabId, schema, table }),
+    describe: (connectionName: string, schema: string, table: string) =>
+      invoke<TableStructure>("describe_table", { connectionName, schema, table }),
 
-    getCompletions: (prefix: string, tabId: number) =>
-      invoke<string[]>("get_completions", { prefix, tabId }),
+    getCompletions: (prefix: string, connectionName: string) =>
+      invoke<string[]>("get_completions", { prefix, connectionName }),
   },
 
   export: {

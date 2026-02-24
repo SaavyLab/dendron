@@ -11,6 +11,7 @@ import { QueryEditor, type QueryEditorHandle } from "@/components/QueryEditor";
 import { ResultsTable } from "@/components/ResultsTable";
 import { StatusBar } from "@/components/StatusBar";
 import { ConnectionDialog } from "@/components/ConnectionDialog";
+import { CommandPalette } from "@/components/CommandPalette";
 
 let nextId = 2;
 
@@ -28,6 +29,8 @@ function RootLayout() {
   ]);
   const [activeTabId, setActiveTabId] = useState(1);
   const [showConnectionDialog, setShowConnectionDialog] = useState(false);
+  const [showCommandPalette, setShowCommandPalette] = useState(false);
+  const [openConnections, setOpenConnections] = useState<string[]>([]);
   const editorRef = useRef<QueryEditorHandle | null>(null);
   const queryClient = useQueryClient();
 
@@ -58,8 +61,6 @@ function RootLayout() {
     (id: number) => {
       if (tabs.length === 1) return;
       api.queries.cancel(id).catch(() => {});
-      api.connections.disconnect(id).catch(() => {});
-      queryClient.removeQueries({ queryKey: [id] });
       setTabs((prev) => {
         if (prev.length === 1) return prev; // safety net: authoritative check on actual state
         const idx = prev.findIndex((t) => t.id === id);
@@ -145,11 +146,49 @@ function RootLayout() {
     [activeTabId, updateTab]
   );
 
+  const openSqlInNewTab = useCallback(async (connectionName: string, sql: string) => {
+    const id = nextId++;
+    setTabs((prev) => [
+      ...prev,
+      {
+        id,
+        label: connectionName,
+        sql,
+        connectionName,
+        result: null,
+        error: null,
+        isRunning: false,
+      },
+    ]);
+    setActiveTabId(id);
+    await api.connections.setTabConnection(id, connectionName);
+  }, []);
+
+  const openConnection = useCallback(async (name: string) => {
+    await api.connections.open(name);
+    setOpenConnections((prev) => prev.includes(name) ? prev : [...prev, name]);
+  }, []);
+
+  const closeConnection = useCallback(async (name: string) => {
+    await api.connections.close(name);
+    setOpenConnections((prev) => prev.filter((n) => n !== name));
+    // Invalidate schema cache for this connection
+    queryClient.removeQueries({ queryKey: [name] });
+  }, [queryClient]);
+
+  // Hydrate open connections from backend on mount
+  useEffect(() => {
+    api.connections.listOpen().then(setOpenConnections).catch(() => {});
+  }, []);
+
   // Global keyboard shortcuts
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
       const mod = e.ctrlKey || e.metaKey;
-      if (mod && e.key === "Enter") {
+      if (mod && e.key === "p") {
+        e.preventDefault();
+        setShowCommandPalette((v) => !v);
+      } else if (mod && e.key === "Enter") {
         e.preventDefault();
         runActiveQuery();
       } else if (mod && e.key === "t") {
@@ -159,13 +198,17 @@ function RootLayout() {
         e.preventDefault();
         closeActiveTab();
       } else if (e.key === "Escape") {
-        const tab = tabs.find((t) => t.id === activeTabId);
-        if (tab?.isRunning) cancelActiveQuery();
+        if (showCommandPalette) {
+          setShowCommandPalette(false);
+        } else {
+          const tab = tabs.find((t) => t.id === activeTabId);
+          if (tab?.isRunning) cancelActiveQuery();
+        }
       }
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [runActiveQuery, addTab, closeActiveTab, cancelActiveQuery, tabs, activeTabId]);
+  }, [runActiveQuery, addTab, closeActiveTab, cancelActiveQuery, tabs, activeTabId, showCommandPalette]);
 
   const ctxValue: WorkspaceContextValue = {
     activeTab,
@@ -179,9 +222,16 @@ function RootLayout() {
     loadMoreQuery,
     cancelActiveQuery,
     insertSql,
+    openSqlInNewTab,
     showConnectionDialog,
     openConnectionDialog: () => setShowConnectionDialog(true),
     closeConnectionDialog: () => setShowConnectionDialog(false),
+    showCommandPalette,
+    openCommandPalette: () => setShowCommandPalette(true),
+    closeCommandPalette: () => setShowCommandPalette(false),
+    openConnections,
+    openConnection,
+    closeConnection,
   };
 
   return (
@@ -244,6 +294,9 @@ function RootLayout() {
 
       {/* Connection dialog */}
       {showConnectionDialog && <ConnectionDialog />}
+
+      {/* Command palette */}
+      {showCommandPalette && <CommandPalette />}
 
       {/* TanStack Router child outlet */}
       <Outlet />

@@ -179,18 +179,19 @@ export const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(
 
       async function loadSchema() {
         try {
-          const schemaNames = await api.schema.getNames(tabId);
+          const connName = connectionName!;
+          const schemaNames = await api.schema.getNames(connName);
           if (cancelled) return;
 
           const schemaMap: Record<string, Record<string, string[]>> = {};
 
           for (const schemaName of schemaNames) {
-            const tables = await api.schema.getTables(tabId, schemaName);
+            const tables = await api.schema.getTables(connName, schemaName);
             if (cancelled) return;
 
             schemaMap[schemaName] = {};
             for (const table of tables) {
-              const columns = await api.schema.getColumns(tabId, schemaName, table.name);
+              const columns = await api.schema.getColumns(connName, schemaName, table.name);
               if (cancelled) return;
               schemaMap[schemaName][table.name] = columns.map(c => c.name);
             }

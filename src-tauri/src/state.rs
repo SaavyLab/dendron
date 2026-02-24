@@ -9,29 +9,30 @@ use dendron_core::config::Config;
 use dendron_core::db::connection::DatabaseConnection;
 use dendron_core::db::ssh::SshTunnel;
 
-pub struct TabContext {
-    pub connection: Arc<DatabaseConnection>,
-    pub connection_name: String,
+/// An open, live database connection owned at the app level.
+/// Lives until explicitly closed — not tied to any tab lifecycle.
+pub struct OpenConnection {
+    pub conn: Arc<DatabaseConnection>,
     pub is_dangerous: bool,
+    /// SSH tunnel kept alive for the lifetime of this connection.
+    pub _ssh_tunnel: Option<SshTunnel>,
+}
+
+/// Lightweight per-tab state — query lifecycle only.
+/// Tabs reference a connection by name; they don't own the pool.
+pub struct TabContext {
+    /// Name of the currently selected connection, or None.
+    pub connection_name: Option<String>,
     cancel_token: Option<CancellationToken>,
     query_id: u64,
-    pub ssh_tunnel: Option<SshTunnel>,
 }
 
 impl TabContext {
-    pub fn new(
-        connection: DatabaseConnection,
-        connection_name: String,
-        is_dangerous: bool,
-        ssh_tunnel: Option<SshTunnel>,
-    ) -> Self {
+    pub fn new() -> Self {
         Self {
-            connection: Arc::new(connection),
-            connection_name,
-            is_dangerous,
+            connection_name: None,
             cancel_token: None,
             query_id: 0,
-            ssh_tunnel,
         }
     }
 
@@ -45,44 +46,31 @@ impl TabContext {
     }
 
     /// Clear the cancel slot only when the generation still matches.
-    /// No-op if swap_connection was called after this query started.
     pub fn finish_query(&mut self, query_id: u64) {
         if self.query_id == query_id {
             self.cancel_token = None;
         }
     }
 
-    /// Cancel any in-flight query without bumping the generation.
-    /// Used for explicit user cancel — finish_query will still clean up harmlessly.
+    /// Cancel any in-flight query.
     pub fn cancel_current_query(&mut self) {
         if let Some(token) = self.cancel_token.take() {
             token.cancel();
         }
     }
+}
 
-    /// Cancel any in-flight query, bump the generation, and install a new connection.
-    /// Any in-flight finish_query from the previous era becomes a no-op because
-    /// query_id no longer matches.  The old SSH tunnel (if any) is dropped here,
-    /// tearing it down before the new one takes its place.
-    pub fn swap_connection(
-        &mut self,
-        new_conn: DatabaseConnection,
-        connection_name: String,
-        is_dangerous: bool,
-        ssh_tunnel: Option<SshTunnel>,
-    ) {
-        self.cancel_current_query();
-        self.query_id += 1;
-        self.connection = Arc::new(new_conn);
-        self.connection_name = connection_name;
-        self.is_dangerous = is_dangerous;
-        self.ssh_tunnel = ssh_tunnel;
+impl Default for TabContext {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
 pub struct AppState {
     pub config: Mutex<Config>,
-    /// tab_id → per-tab context (connection + query lifecycle)
+    /// connection_name → live pool + tunnel (app-level, persistent)
+    pub connections: Mutex<HashMap<String, Arc<OpenConnection>>>,
+    /// tab_id → per-tab query lifecycle state
     pub tabs: Mutex<HashMap<u32, TabContext>>,
 }
 
@@ -90,6 +78,7 @@ impl AppState {
     pub fn new() -> Self {
         Self {
             config: Mutex::new(Config::load()),
+            connections: Mutex::new(HashMap::new()),
             tabs: Mutex::new(HashMap::new()),
         }
     }

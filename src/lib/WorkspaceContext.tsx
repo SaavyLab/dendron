@@ -13,9 +13,18 @@ export interface WorkspaceContextValue {
   loadMoreQuery: () => Promise<void>;
   cancelActiveQuery: () => void;
   insertSql: (sql: string) => void;
+  /** Open a new tab pointed at connectionName with sql pre-filled, then run it. */
+  openSqlInNewTab: (connectionName: string, sql: string) => Promise<void>;
   showConnectionDialog: boolean;
   openConnectionDialog: () => void;
   closeConnectionDialog: () => void;
+  showCommandPalette: boolean;
+  openCommandPalette: () => void;
+  closeCommandPalette: () => void;
+  /** Names of all currently open (live) connections. */
+  openConnections: string[];
+  openConnection: (name: string) => Promise<void>;
+  closeConnection: (name: string) => Promise<void>;
 }
 
 export const WorkspaceContext = createContext<WorkspaceContextValue | null>(null);

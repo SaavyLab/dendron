@@ -11,13 +11,16 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .manage(AppState::new())
         .invoke_handler(tauri::generate_handler![
-            // connections
+            // connections (saved config CRUD)
             list_connections,
             save_connection,
             delete_connection,
-            connect,
-            disconnect,
             test_connection,
+            // connections (app-level lifecycle)
+            open_connection,
+            close_connection,
+            list_open_connections,
+            set_tab_connection,
             // queries
             execute_query,
             cancel_query,

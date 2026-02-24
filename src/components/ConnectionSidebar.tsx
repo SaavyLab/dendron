@@ -8,35 +8,76 @@ import { Spinner } from "@/components/ui/Spinner";
 import { cn } from "@/lib/utils";
 
 export function ConnectionSidebar() {
-  const { activeTab, updateTab, openConnectionDialog } = useWorkspace();
+  const {
+    activeTab,
+    updateTab,
+    openConnectionDialog,
+    openConnections,
+    openConnection,
+    closeConnection,
+  } = useWorkspace();
   const queryClient = useQueryClient();
   const [connectingName, setConnectingName] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  // Track which open connections have their schema tree expanded
+  const [expandedConnections, setExpandedConnections] = useState<Set<string>>(new Set());
 
   const connectionsQuery = useQuery({
     queryKey: ["connections"],
     queryFn: api.connections.list,
   });
 
-  async function handleConnect(conn: ConnectionInfo) {
-    setConnectingName(conn.name);
-    setErrorMsg(null);
-    try {
-      await api.connections.connect(conn.name, activeTab.id);
-      updateTab(activeTab.id, { connectionName: conn.name, label: conn.name });
-      queryClient.removeQueries({ queryKey: [activeTab.id] });
-    } catch (e) {
-      setErrorMsg(e instanceof Error ? e.message : String(e));
-    } finally {
-      setConnectingName(null);
-    }
+  function toggleExpanded(name: string) {
+    setExpandedConnections((prev) => {
+      const next = new Set(prev);
+      if (next.has(name)) {
+        next.delete(name);
+      } else {
+        next.add(name);
+      }
+      return next;
+    });
   }
 
-  async function handleDisconnect() {
+  async function handleConnectionClick(conn: ConnectionInfo) {
+    const isOpen = openConnections.includes(conn.name);
+
+    if (!isOpen) {
+      setConnectingName(conn.name);
+      setErrorMsg(null);
+      try {
+        await openConnection(conn.name);
+        // Auto-expand schema tree when first opened
+        setExpandedConnections((prev) => new Set([...prev, conn.name]));
+      } catch (e) {
+        setErrorMsg(e instanceof Error ? e.message : String(e));
+        setConnectingName(null);
+        return;
+      }
+      setConnectingName(null);
+    } else {
+      toggleExpanded(conn.name);
+    }
+
+    // Always point active tab at this connection
+    await api.connections.setTabConnection(activeTab.id, conn.name);
+    updateTab(activeTab.id, { connectionName: conn.name, label: conn.name });
+  }
+
+  async function handleClose(name: string, e: React.MouseEvent) {
+    e.stopPropagation();
     try {
-      await api.connections.disconnect(activeTab.id);
-      updateTab(activeTab.id, { connectionName: null, label: `Query ${activeTab.id}` });
-      queryClient.removeQueries({ queryKey: [activeTab.id] });
+      await closeConnection(name);
+      setExpandedConnections((prev) => {
+        const next = new Set(prev);
+        next.delete(name);
+        return next;
+      });
+      // If active tab was on this connection, detach it
+      if (activeTab.connectionName === name) {
+        await api.connections.setTabConnection(activeTab.id, null);
+        updateTab(activeTab.id, { connectionName: null, label: `Query ${activeTab.id}` });
+      }
     } catch {
       // ignore
     }
@@ -94,7 +135,7 @@ export function ConnectionSidebar() {
       {/* Error */}
       {errorMsg && (
         <div
-          className="px-3 py-1.5 text-[11px] border-b"
+          className="px-3 py-1.5 text-[11px] border-b shrink-0"
           style={{
             color: "var(--error)",
             background: "rgba(248,113,113,0.05)",
@@ -106,8 +147,8 @@ export function ConnectionSidebar() {
         </div>
       )}
 
-      {/* Connection list */}
-      <div className="overflow-y-auto">
+      {/* Connection list with inline schema trees */}
+      <div className="overflow-y-auto flex-1">
         {connectionsQuery.isLoading && (
           <div className="flex items-center gap-2 px-3 py-2" style={{ color: "var(--text-muted)", fontSize: "12px" }}>
             <Spinner size="xs" />
@@ -128,114 +169,106 @@ export function ConnectionSidebar() {
         )}
 
         {connections.map((conn) => {
-          const isActive = activeTab.connectionName === conn.name;
+          const isOpen = openConnections.includes(conn.name);
+          const isExpanded = expandedConnections.has(conn.name);
+          const isActiveTab = activeTab.connectionName === conn.name;
           const isConnecting = connectingName === conn.name;
 
           return (
-            <div
-              key={conn.name}
-              className={cn(
-                "group flex items-center gap-2 px-3 cursor-pointer border-b transition-colors",
-                isActive ? "bg-white/[0.04]" : "hover:bg-white/[0.025]"
-              )}
-              style={{ height: "32px", borderColor: "var(--border-subtle)" }}
-              onClick={() => !isActive && handleConnect(conn)}
-            >
-              {/* Type indicator */}
-              <span
-                style={{
-                  fontFamily: "var(--font-mono)",
-                  fontSize: "9px",
-                  color: conn.type === "postgres" ? "#818cf8" : "#fb923c",
-                  background: conn.type === "postgres"
-                    ? "rgba(129,140,248,0.1)"
-                    : "rgba(251,146,60,0.1)",
-                  border: `1px solid ${conn.type === "postgres" ? "rgba(129,140,248,0.2)" : "rgba(251,146,60,0.2)"}`,
-                  borderRadius: "3px",
-                  padding: "0 4px",
-                  lineHeight: "16px",
-                  flexShrink: 0,
-                  textTransform: "uppercase",
-                  letterSpacing: "0.04em",
-                }}
+            <div key={conn.name}>
+              {/* Connection row */}
+              <div
+                className={cn(
+                  "group flex items-center gap-2 px-3 cursor-pointer border-b transition-colors",
+                  isActiveTab ? "bg-white/[0.04]" : "hover:bg-white/[0.025]"
+                )}
+                style={{ height: "32px", borderColor: "var(--border-subtle)" }}
+                onClick={() => handleConnectionClick(conn)}
               >
-                {conn.type === "postgres" ? "PG" : "SQ"}
-              </span>
-
-              {/* Name */}
-              <span
-                className="truncate flex-1"
-                style={{
-                  fontFamily: "var(--font-mono)",
-                  fontSize: "12px",
-                  color: isActive ? "var(--text-primary)" : "var(--text-secondary)",
-                }}
-              >
-                {conn.name}
-              </span>
-
-              {/* Actions */}
-              {isConnecting ? (
-                <Spinner size="xs" className="shrink-0" />
-              ) : isActive ? (
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleDisconnect();
-                  }}
-                  title="Disconnect"
-                  className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
+                {/* Expand chevron for open connections */}
+                <span
+                  className="shrink-0 transition-transform"
                   style={{
-                    fontSize: "10px",
-                    color: "var(--text-muted)",
-                    padding: "2px 4px",
-                    borderRadius: "3px",
-                    lineHeight: 1,
+                    fontSize: "9px",
+                    color: isOpen ? "var(--text-muted)" : "transparent",
+                    transform: isExpanded ? "rotate(90deg)" : "rotate(0deg)",
+                    width: "10px",
+                    display: "inline-flex",
+                    justifyContent: "center",
                   }}
-                  onMouseEnter={(e) => ((e.currentTarget as HTMLButtonElement).style.color = "var(--error)")}
-                  onMouseLeave={(e) => ((e.currentTarget as HTMLButtonElement).style.color = "var(--text-muted)")}
                 >
-                  ⊘
-                </button>
-              ) : (
-                <button
-                  onClick={(e) => handleDelete(conn.name, e)}
-                  title="Delete connection"
-                  className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
-                  style={{ fontSize: "11px", color: "var(--text-muted)", padding: "2px 4px" }}
-                  onMouseEnter={(e) => ((e.currentTarget as HTMLButtonElement).style.color = "var(--error)")}
-                  onMouseLeave={(e) => ((e.currentTarget as HTMLButtonElement).style.color = "var(--text-muted)")}
+                  ›
+                </span>
+
+                {/* Type badge */}
+                <span
+                  style={{
+                    fontFamily: "var(--font-mono)",
+                    fontSize: "9px",
+                    color: conn.type === "postgres" ? "#818cf8" : "#fb923c",
+                    background: conn.type === "postgres"
+                      ? "rgba(129,140,248,0.1)"
+                      : "rgba(251,146,60,0.1)",
+                    border: `1px solid ${conn.type === "postgres" ? "rgba(129,140,248,0.2)" : "rgba(251,146,60,0.2)"}`,
+                    borderRadius: "3px",
+                    padding: "0 4px",
+                    lineHeight: "16px",
+                    flexShrink: 0,
+                    textTransform: "uppercase",
+                    letterSpacing: "0.04em",
+                  }}
                 >
-                  ×
-                </button>
+                  {conn.type === "postgres" ? "PG" : "SQ"}
+                </span>
+
+                {/* Name */}
+                <span
+                  className="truncate flex-1"
+                  style={{
+                    fontFamily: "var(--font-mono)",
+                    fontSize: "12px",
+                    color: isActiveTab ? "var(--text-primary)" : isOpen ? "var(--text-secondary)" : "var(--text-muted)",
+                  }}
+                >
+                  {conn.name}
+                </span>
+
+                {/* Actions */}
+                {isConnecting ? (
+                  <Spinner size="xs" className="shrink-0" />
+                ) : isOpen ? (
+                  <button
+                    onClick={(e) => handleClose(conn.name, e)}
+                    title="Close connection"
+                    className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
+                    style={{ fontSize: "13px", color: "var(--text-muted)", padding: "2px 4px", lineHeight: 1 }}
+                    onMouseEnter={(e) => ((e.currentTarget as HTMLButtonElement).style.color = "var(--error)")}
+                    onMouseLeave={(e) => ((e.currentTarget as HTMLButtonElement).style.color = "var(--text-muted)")}
+                  >
+                    ×
+                  </button>
+                ) : (
+                  <button
+                    onClick={(e) => handleDelete(conn.name, e)}
+                    title="Delete connection"
+                    className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
+                    style={{ fontSize: "13px", color: "var(--text-muted)", padding: "2px 4px", lineHeight: 1 }}
+                    onMouseEnter={(e) => ((e.currentTarget as HTMLButtonElement).style.color = "var(--error)")}
+                    onMouseLeave={(e) => ((e.currentTarget as HTMLButtonElement).style.color = "var(--text-muted)")}
+                  >
+                    ×
+                  </button>
+                )}
+              </div>
+
+              {/* Inline schema tree */}
+              {isOpen && isExpanded && (
+                <SchemaTree connectionName={conn.name} />
               )}
             </div>
           );
         })}
       </div>
-
-      {/* Schema tree (when connected) */}
-      {activeTab.connectionName && (
-        <>
-          <div
-            className="flex items-center px-3 shrink-0 border-t border-b"
-            style={{ height: "28px", borderColor: "var(--border)" }}
-          >
-            <span
-              style={{
-                fontSize: "11px",
-                color: "var(--text-muted)",
-                textTransform: "uppercase",
-                letterSpacing: "0.08em",
-                fontWeight: 500,
-              }}
-            >
-              Schema
-            </span>
-          </div>
-          <SchemaTree tabId={activeTab.id} />
-        </>
-      )}
     </div>
   );
 }

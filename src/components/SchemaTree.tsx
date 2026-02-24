@@ -7,19 +7,14 @@ import { cn } from "@/lib/utils";
 import { Spinner } from "@/components/ui/Spinner";
 
 interface SchemaTreeProps {
-  tabId: number;
+  connectionName: string;
 }
 
-export function SchemaTree({ tabId }: SchemaTreeProps) {
-  const { activeTab } = useWorkspace();
-
+export function SchemaTree({ connectionName }: SchemaTreeProps) {
   const schemasQuery = useQuery({
-    queryKey: [tabId, "schemas"],
-    queryFn: () => api.schema.getNames(tabId),
-    enabled: activeTab.connectionName !== null,
+    queryKey: [connectionName, "schemas"],
+    queryFn: () => api.schema.getNames(connectionName),
   });
-
-  if (!activeTab.connectionName) return null;
 
   if (schemasQuery.isLoading) {
     return (
@@ -43,18 +38,18 @@ export function SchemaTree({ tabId }: SchemaTreeProps) {
   return (
     <div className="flex flex-col overflow-y-auto flex-1">
       {schemas.map((schema) => (
-        <SchemaNode key={schema} schema={schema} tabId={tabId} />
+        <SchemaNode key={schema} schema={schema} connectionName={connectionName} />
       ))}
     </div>
   );
 }
 
-function SchemaNode({ schema, tabId }: { schema: string; tabId: number }) {
+function SchemaNode({ schema, connectionName }: { schema: string; connectionName: string }) {
   const [expanded, setExpanded] = useState(false);
 
   const tablesQuery = useQuery({
-    queryKey: [tabId, "tables", schema],
-    queryFn: () => api.schema.getTables(tabId, schema),
+    queryKey: [connectionName, "tables", schema],
+    queryFn: () => api.schema.getTables(connectionName, schema),
     enabled: expanded,
   });
 
@@ -75,7 +70,7 @@ function SchemaNode({ schema, tabId }: { schema: string; tabId: number }) {
           key={table.name}
           schema={schema}
           table={table}
-          tabId={tabId}
+          connectionName={connectionName}
         />
       ))}
     </div>
@@ -85,25 +80,22 @@ function SchemaNode({ schema, tabId }: { schema: string; tabId: number }) {
 function TableNode({
   schema,
   table,
-  tabId,
+  connectionName,
 }: {
   schema: string;
   table: TableRow;
-  tabId: number;
+  connectionName: string;
 }) {
   const [expanded, setExpanded] = useState(false);
-  const { insertSql } = useWorkspace();
+  const { insertSql, openSqlInNewTab } = useWorkspace();
 
   const structureQuery = useQuery({
-    queryKey: [tabId, "structure", schema, table.name],
-    queryFn: () => api.schema.describe(tabId, schema, table.name),
+    queryKey: [connectionName, "structure", schema, table.name],
+    queryFn: () => api.schema.describe(connectionName, schema, table.name),
     enabled: expanded,
   });
 
-  function handleTableClick() {
-    const q = `SELECT *\nFROM "${schema}"."${table.name}"\nLIMIT 100`;
-    insertSql(q);
-  }
+  const selectSql = `SELECT *\nFROM "${schema}"."${table.name}"\nLIMIT 100`;
 
   const structure = structureQuery.data;
 
@@ -115,16 +107,16 @@ function TableNode({
         isExpanded={expanded}
         isLoading={structureQuery.isFetching}
         onClick={() => setExpanded((e) => !e)}
-        onDoubleClick={handleTableClick}
+        onDoubleClick={() => insertSql(selectSql)}
         label={table.name}
         labelStyle={{ color: table.is_view ? "var(--text-muted)" : "var(--text-primary)" }}
         action={
           <button
             onClick={(e) => {
               e.stopPropagation();
-              handleTableClick();
+              openSqlInNewTab(connectionName, selectSql);
             }}
-            title={`SELECT * FROM ${table.name}`}
+            title={`Open SELECT * in new tab`}
             className="opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
             style={{
               color: "var(--text-muted)",

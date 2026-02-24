@@ -27,7 +27,8 @@ These are friction points you'd hit constantly. Do these first.
 - [ ] **Custom right-click context menus** — override the default browser/webview context menu everywhere; results table (copy cell, copy row as JSON/CSV, copy as INSERT), schema tree (copy table name, generate SELECT, inspect), editor (format, explain); own the full UX surface
 - [ ] **Row editing** — click a cell to edit inline, write back via UPDATE; TablePlus's core UX
 - [ ] **MySQL/MariaDB support** — only Postgres + SQLite right now; MySQL is too common to leave out
-- [ ] **Schema tree: indexes + constraints + FKs** — currently only shows columns
+- [x] **Schema tree: indexes + constraints + FKs** — Columns/Indexes/Keys sub-groups via `describe_table`; each collapsible; indexes show pk/unique/idx badge, FKs show referenced table
+- [ ] **Theming system** — runtime-swappable named themes via CSS custom properties; all colors already go through `:root` vars so the plumbing is nearly free; needs a `themes.ts` definition file, a theme-picker UI (likely inside settings or command palette), and persistence via the existing `theme_name` field in `Settings`
 - [ ] **Table browser mode** — browse a table with filter/sort UI without writing SQL
 - [ ] **Query history timestamps** — history stores queries but not when they ran
 - [ ] **Tab persistence** — reopen the app and your tabs/queries are still there

@@ -1,12 +1,13 @@
 //! Tauri commands for connection management
 
+use std::sync::Arc;
 use tauri::State;
 use serde::{Deserialize, Serialize};
 
 use dendron_core::config::{SavedConnection, SshAuth, SshConfig};
 use dendron_core::db::connection::{ConnectionConfig, DatabaseConnection};
 use dendron_core::db::ssh::SshTunnel;
-use crate::state::{AppState, TabContext};
+use crate::state::{AppState, OpenConnection, TabContext};
 
 /// Serializable connection info for the frontend
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -87,6 +88,8 @@ impl From<&SavedConnection> for ConnectionInfo {
     }
 }
 
+// ── Saved connection CRUD (unchanged) ─────────────────────────────────────────
+
 #[tauri::command]
 pub async fn list_connections(state: State<'_, AppState>) -> Result<Vec<ConnectionInfo>, String> {
     let config = state.config.lock().await;
@@ -114,45 +117,6 @@ pub async fn delete_connection(name: String, state: State<'_, AppState>) -> Resu
 }
 
 #[tauri::command]
-pub async fn connect(
-    name: String,
-    tab_id: u32,
-    state: State<'_, AppState>,
-) -> Result<(), String> {
-    let config = state.config.lock().await;
-    let saved = config.connections.iter()
-        .find(|c| c.name() == name)
-        .ok_or_else(|| format!("Connection '{}' not found", name))?;
-
-    let connection_name = saved.name().to_string();
-    let is_dangerous = saved.is_dangerous();
-    let (effective_host, effective_port, tunnel) = build_tunnel(saved).await?;
-    let conn_config = saved_to_connection_config_with_host(saved, effective_host, effective_port)?;
-    drop(config);
-
-    let db_conn = DatabaseConnection::connect(&conn_config).await
-        .map_err(|e| e.to_string())?;
-
-    let mut tabs = state.tabs.lock().await;
-    if let Some(ctx) = tabs.get_mut(&tab_id) {
-        ctx.swap_connection(db_conn, connection_name, is_dangerous, tunnel);
-    } else {
-        tabs.insert(tab_id, TabContext::new(db_conn, connection_name, is_dangerous, tunnel));
-    }
-    Ok(())
-}
-
-#[tauri::command]
-pub async fn disconnect(tab_id: u32, state: State<'_, AppState>) -> Result<(), String> {
-    let mut tabs = state.tabs.lock().await;
-    if let Some(mut ctx) = tabs.remove(&tab_id) {
-        ctx.cancel_current_query();
-        // ctx.ssh_tunnel dropped here, tearing down the tunnel
-    }
-    Ok(())
-}
-
-#[tauri::command]
 pub async fn test_connection(
     conn: ConnectionInfo,
     password: Option<String>,
@@ -163,6 +127,75 @@ pub async fn test_connection(
     let conn_config = saved_to_connection_config_with_host(&saved, effective_host, effective_port)?;
     // _tunnel dropped here — temporary tunnel torn down after test
     DatabaseConnection::test_connection(&conn_config).await.map_err(|e| e.to_string())
+}
+
+// ── App-level connection lifecycle ────────────────────────────────────────────
+
+/// Open a named connection (establish pool + tunnel) and store it app-wide.
+/// Idempotent: if already open, returns immediately without re-connecting.
+#[tauri::command]
+pub async fn open_connection(name: String, state: State<'_, AppState>) -> Result<(), String> {
+    // Check if already open — avoid holding the lock across await points.
+    {
+        let conns = state.connections.lock().await;
+        if conns.contains_key(&name) {
+            return Ok(());
+        }
+    }
+
+    let saved = {
+        let config = state.config.lock().await;
+        config.connections.iter()
+            .find(|c| c.name() == name)
+            .ok_or_else(|| format!("Connection '{}' not found", name))?
+            .clone()
+    };
+
+    let is_dangerous = saved.is_dangerous();
+    let (effective_host, effective_port, tunnel) = build_tunnel(&saved).await?;
+    let conn_config = saved_to_connection_config_with_host(&saved, effective_host, effective_port)?;
+
+    let db_conn = DatabaseConnection::connect(&conn_config).await
+        .map_err(|e| e.to_string())?;
+
+    let open = Arc::new(OpenConnection {
+        conn: Arc::new(db_conn),
+        is_dangerous,
+        _ssh_tunnel: tunnel,
+    });
+
+    state.connections.lock().await.insert(name, open);
+    Ok(())
+}
+
+/// Close a named connection. Drops the pool and SSH tunnel.
+/// Tabs that pointed to this connection keep their `connection_name` string
+/// but will get "no active connection" errors until reconnected.
+#[tauri::command]
+pub async fn close_connection(name: String, state: State<'_, AppState>) -> Result<(), String> {
+    state.connections.lock().await.remove(&name);
+    Ok(())
+}
+
+/// List names of all currently open (live) connections.
+#[tauri::command]
+pub async fn list_open_connections(state: State<'_, AppState>) -> Result<Vec<String>, String> {
+    let conns = state.connections.lock().await;
+    Ok(conns.keys().cloned().collect())
+}
+
+/// Point a tab at an open connection (or clear it).
+/// Creates the TabContext if it doesn't exist yet.
+#[tauri::command]
+pub async fn set_tab_connection(
+    tab_id: u32,
+    connection_name: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let mut tabs = state.tabs.lock().await;
+    let ctx = tabs.entry(tab_id).or_insert_with(TabContext::new);
+    ctx.connection_name = connection_name;
+    Ok(())
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
