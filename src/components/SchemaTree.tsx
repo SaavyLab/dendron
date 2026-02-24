@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/tauri";
-import type { TableRow, ColumnInfo } from "@/lib/types";
+import type { TableRow, ColumnDetail, IndexInfo, ForeignKeyInfo } from "@/lib/types";
 import { useWorkspace } from "@/lib/WorkspaceContext";
 import { cn } from "@/lib/utils";
 import { Spinner } from "@/components/ui/Spinner";
@@ -60,7 +60,6 @@ function SchemaNode({ schema, tabId }: { schema: string; tabId: number }) {
 
   return (
     <div>
-      {/* Schema row */}
       <TreeRow
         depth={0}
         isExpandable
@@ -71,7 +70,6 @@ function SchemaNode({ schema, tabId }: { schema: string; tabId: number }) {
         labelStyle={{ color: "var(--text-secondary)", textTransform: "lowercase" }}
       />
 
-      {/* Tables */}
       {expanded && tablesQuery.data?.map((table) => (
         <TableNode
           key={table.name}
@@ -96,16 +94,18 @@ function TableNode({
   const [expanded, setExpanded] = useState(false);
   const { insertSql } = useWorkspace();
 
-  const columnsQuery = useQuery({
-    queryKey: [tabId, "columns", schema, table.name],
-    queryFn: () => api.schema.getColumns(tabId, schema, table.name),
+  const structureQuery = useQuery({
+    queryKey: [tabId, "structure", schema, table.name],
+    queryFn: () => api.schema.describe(tabId, schema, table.name),
     enabled: expanded,
   });
 
   function handleTableClick() {
-    const q = `SELECT *\nFROM "${schema}"."${table.name}"\nLIMIT 100;`;
+    const q = `SELECT *\nFROM "${schema}"."${table.name}"\nLIMIT 100`;
     insertSql(q);
   }
+
+  const structure = structureQuery.data;
 
   return (
     <div>
@@ -113,12 +113,10 @@ function TableNode({
         depth={1}
         isExpandable
         isExpanded={expanded}
-        isLoading={columnsQuery.isFetching}
+        isLoading={structureQuery.isFetching}
         onClick={() => setExpanded((e) => !e)}
         onDoubleClick={handleTableClick}
         label={table.name}
-        icon={table.is_view ? "○" : "▪"}
-        iconStyle={{ color: table.is_view ? "var(--text-muted)" : "var(--accent)", fontSize: "8px" }}
         labelStyle={{ color: table.is_view ? "var(--text-muted)" : "var(--text-primary)" }}
         action={
           <button
@@ -140,26 +138,125 @@ function TableNode({
         }
       />
 
-      {/* Columns */}
-      {expanded && columnsQuery.data?.map((col) => (
-        <ColumnRow key={col.name} col={col} />
-      ))}
+      {expanded && structure && (
+        <>
+          {/* Columns group */}
+          <CategoryGroup
+            depth={2}
+            label="Columns"
+            count={structure.columns.length}
+          >
+            {structure.columns.map((col) => (
+              <ColumnRow key={col.name} col={col} />
+            ))}
+          </CategoryGroup>
+
+          {/* Indexes group */}
+          {structure.indexes.length > 0 && (
+            <CategoryGroup
+              depth={2}
+              label="Indexes"
+              count={structure.indexes.length}
+            >
+              {structure.indexes.map((idx) => (
+                <IndexRow key={idx.name} idx={idx} />
+              ))}
+            </CategoryGroup>
+          )}
+
+          {/* Foreign keys group */}
+          {structure.foreign_keys.length > 0 && (
+            <CategoryGroup
+              depth={2}
+              label="Keys"
+              count={structure.foreign_keys.length}
+            >
+              {structure.foreign_keys.map((fk) => (
+                <ForeignKeyRow key={fk.name} fk={fk} />
+              ))}
+            </CategoryGroup>
+          )}
+        </>
+      )}
     </div>
   );
 }
 
-function ColumnRow({ col }: { col: ColumnInfo }) {
+function CategoryGroup({
+  depth,
+  label,
+  count,
+  children,
+}: {
+  depth: number;
+  label: string;
+  count: number;
+  children: React.ReactNode;
+}) {
+  const [expanded, setExpanded] = useState(true);
+
+  return (
+    <div>
+      <div
+        className="px-2 group"
+        style={{ height: "22px" }}
+      >
+        <div
+          className="flex items-center gap-1.5 h-full rounded-sm cursor-pointer hover:bg-white/[0.03] transition-colors"
+          style={{ paddingLeft: `${depth * 16 + 4}px` }}
+          onClick={() => setExpanded((e) => !e)}
+        >
+          <span
+            className="shrink-0 transition-transform"
+            style={{
+              fontSize: "9px",
+              color: "var(--text-muted)",
+              transform: expanded ? "rotate(90deg)" : "rotate(0deg)",
+              width: "10px",
+              display: "inline-flex",
+              justifyContent: "center",
+            }}
+          >
+            ›
+          </span>
+          <span
+            style={{
+              fontFamily: "var(--font-mono)",
+              fontSize: "11px",
+              color: "var(--text-muted)",
+            }}
+          >
+            {label}
+          </span>
+          <span
+            style={{
+              fontFamily: "var(--font-mono)",
+              fontSize: "10px",
+              color: "var(--text-muted)",
+              opacity: 0.5,
+            }}
+          >
+            {count}
+          </span>
+        </div>
+      </div>
+      {expanded && children}
+    </div>
+  );
+}
+
+function ColumnRow({ col }: { col: ColumnDetail }) {
   return (
     <div
       className="flex items-center px-2 group"
-      style={{ height: "24px" }}
+      style={{ height: "22px" }}
     >
       <div
         className="flex items-center gap-1.5 w-full"
-        style={{ paddingLeft: "40px" }}
+        style={{ paddingLeft: "56px" }}
       >
         {col.is_primary_key && (
-          <span style={{ color: "var(--warning)", fontSize: "9px" }}>⬡</span>
+          <span style={{ color: "var(--warning)", fontSize: "9px", flexShrink: 0 }}>⬡</span>
         )}
         <span
           className="truncate"
@@ -186,6 +283,78 @@ function ColumnRow({ col }: { col: ColumnInfo }) {
   );
 }
 
+function IndexRow({ idx }: { idx: IndexInfo }) {
+  return (
+    <div
+      className="flex items-center px-2"
+      style={{ height: "22px" }}
+    >
+      <div
+        className="flex items-center gap-1.5 w-full min-w-0"
+        style={{ paddingLeft: "56px" }}
+      >
+        <span
+          className="truncate flex-1"
+          style={{
+            fontFamily: "var(--font-mono)",
+            fontSize: "11px",
+            color: "var(--text-secondary)",
+          }}
+          title={idx.name}
+        >
+          {idx.name}
+        </span>
+        <span
+          className="shrink-0"
+          style={{
+            fontFamily: "var(--font-mono)",
+            fontSize: "10px",
+            color: "var(--text-muted)",
+          }}
+        >
+          {idx.is_primary ? "pk" : idx.is_unique ? "unique" : "idx"}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function ForeignKeyRow({ fk }: { fk: ForeignKeyInfo }) {
+  return (
+    <div
+      className="flex items-center px-2"
+      style={{ height: "22px" }}
+    >
+      <div
+        className="flex items-center gap-1.5 w-full min-w-0"
+        style={{ paddingLeft: "56px" }}
+      >
+        <span
+          className="truncate flex-1"
+          style={{
+            fontFamily: "var(--font-mono)",
+            fontSize: "11px",
+            color: "var(--text-secondary)",
+          }}
+          title={`${fk.columns.join(", ")} → ${fk.referenced_table}(${fk.referenced_columns.join(", ")})`}
+        >
+          {fk.columns.join(", ")}
+        </span>
+        <span
+          className="shrink-0"
+          style={{
+            fontFamily: "var(--font-mono)",
+            fontSize: "10px",
+            color: "var(--text-muted)",
+          }}
+        >
+          → {fk.referenced_table}
+        </span>
+      </div>
+    </div>
+  );
+}
+
 interface TreeRowProps {
   depth: number;
   isExpandable?: boolean;
@@ -194,8 +363,6 @@ interface TreeRowProps {
   onClick?: () => void;
   onDoubleClick?: () => void;
   label: string;
-  icon?: string;
-  iconStyle?: React.CSSProperties;
   labelStyle?: React.CSSProperties;
   action?: React.ReactNode;
 }
@@ -208,8 +375,6 @@ function TreeRow({
   onClick,
   onDoubleClick,
   label,
-  icon,
-  iconStyle,
   labelStyle,
   action,
 }: TreeRowProps) {
@@ -241,13 +406,6 @@ function TreeRow({
             }}
           >
             ›
-          </span>
-        )}
-
-        {/* Icon */}
-        {icon && (
-          <span className="shrink-0" style={{ ...iconStyle, width: "12px", textAlign: "center" }}>
-            {icon}
           </span>
         )}
 

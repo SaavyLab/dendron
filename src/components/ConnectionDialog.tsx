@@ -197,7 +197,7 @@ export function ConnectionDialog() {
           </button>
         </div>
 
-        <div className="flex flex-col gap-4 p-4 overflow-y-auto">
+        <div className="flex flex-col gap-4 p-4 overflow-y-auto overflow-x-hidden">
           {/* Type tabs */}
           <div
             className="flex rounded overflow-hidden"
@@ -555,7 +555,7 @@ function Field({ label, children, className }: FieldProps) {
           (e.currentTarget as HTMLDivElement).style.borderColor = "var(--border-strong)";
         }}
       >
-        <div className="flex-1">{children}</div>
+        <div className="flex-1 min-w-0">{children}</div>
       </div>
     </div>
   );

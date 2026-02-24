@@ -14,6 +14,8 @@ pub async fn execute_query(
     state: State<'_, AppState>,
 ) -> Result<QueryResult, String> {
     let offset = offset.unwrap_or(0);
+    // Strip trailing semicolons so the SQL can be safely embedded as a subquery.
+    let sql = sql.trim_end().trim_end_matches(';').to_string();
     let is_select = analyze_query(&sql) == QueryType::Select;
     let has_order_by = if is_select { has_top_level_order_by(&sql) } else { true };
     let effective_sql = if is_select {
