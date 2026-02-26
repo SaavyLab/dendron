@@ -76,6 +76,11 @@ function RootLayout() {
 
   const closeActiveTab = useCallback(() => closeTab(activeTabId), [activeTabId, closeTab]);
 
+  /**
+   * Smart run: if text is selected run the selection, otherwise run the
+   * statement under the cursor.  Falls back to the full editor content when
+   * there's only a single statement.
+   */
   const runActiveQuery = useCallback(async () => {
     const tab = tabs.find((t) => t.id === activeTabId);
     if (!tab || tab.isRunning) return;
@@ -87,11 +92,27 @@ function RootLayout() {
       return;
     }
 
-    if (!tab.sql.trim()) return;
+    // Determine what SQL to run: selection > cursor statement > full text
+    const editor = editorRef.current;
+    let sqlToRun = tab.sql.trim();
+
+    if (editor) {
+      const selected = editor.getSelectedText();
+      if (selected) {
+        sqlToRun = selected;
+      } else {
+        const stmt = editor.getStatementAtCursor();
+        if (stmt) {
+          sqlToRun = stmt.text;
+        }
+      }
+    }
+
+    if (!sqlToRun) return;
 
     // Safety check
     try {
-      const safety = await api.queries.checkSafety(tab.sql, tab.id);
+      const safety = await api.queries.checkSafety(sqlToRun, tab.id);
       if (safety.requires_confirmation) {
         const msg = safety.warning_message ?? "This query may modify or delete data.";
         if (!window.confirm(`${msg}\n\nContinue?`)) return;
@@ -103,9 +124,59 @@ function RootLayout() {
     updateTab(tab.id, { isRunning: true, error: null, result: null });
 
     try {
-      const result = await api.queries.execute(tab.id, tab.sql);
-      await api.queries.addHistory(tab.sql).catch(() => {});
+      const result = await api.queries.execute(tab.id, sqlToRun);
+      await api.queries.addHistory(sqlToRun).catch(() => {});
       updateTab(tab.id, { result, isRunning: false });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      updateTab(tab.id, { error: msg, isRunning: false });
+    }
+  }, [tabs, activeTabId, updateTab]);
+
+  /**
+   * Run all statements in the editor sequentially.  Shows the result of
+   * the last statement that produces output (typically a SELECT).  Stops
+   * on the first error.
+   */
+  const runAllQueries = useCallback(async () => {
+    const tab = tabs.find((t) => t.id === activeTabId);
+    if (!tab || tab.isRunning) return;
+
+    if (!tab.connectionName) {
+      updateTab(tab.id, {
+        error: "No connection selected. Click a connection in the sidebar to connect.",
+      });
+      return;
+    }
+
+    const editor = editorRef.current;
+    const statements = editor?.getAllStatements() ?? [];
+    if (statements.length === 0) return;
+
+    // Safety check against the full SQL
+    try {
+      const safety = await api.queries.checkSafety(tab.sql, tab.id);
+      if (safety.requires_confirmation) {
+        const msg = safety.warning_message ?? "This batch may modify or delete data.";
+        if (!window.confirm(`${msg}\n\nContinue?`)) return;
+      }
+    } catch {
+      // If safety check fails, proceed anyway
+    }
+
+    updateTab(tab.id, { isRunning: true, error: null, result: null });
+
+    try {
+      let lastResult = null;
+      for (const stmt of statements) {
+        const result = await api.queries.execute(tab.id, stmt.text);
+        // Keep the last result that has columns (i.e. a SELECT-like result)
+        if (result.columns.length > 0) {
+          lastResult = result;
+        }
+      }
+      await api.queries.addHistory(tab.sql).catch(() => {});
+      updateTab(tab.id, { result: lastResult, isRunning: false });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       updateTab(tab.id, { error: msg, isRunning: false });
@@ -188,6 +259,9 @@ function RootLayout() {
       if (mod && e.key === "p") {
         e.preventDefault();
         setShowCommandPalette((v) => !v);
+      } else if (mod && e.shiftKey && e.key === "Enter") {
+        e.preventDefault();
+        runAllQueries();
       } else if (mod && e.key === "Enter") {
         e.preventDefault();
         runActiveQuery();
@@ -208,7 +282,7 @@ function RootLayout() {
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [runActiveQuery, addTab, closeActiveTab, cancelActiveQuery, tabs, activeTabId, showCommandPalette]);
+  }, [runActiveQuery, runAllQueries, addTab, closeActiveTab, cancelActiveQuery, tabs, activeTabId, showCommandPalette]);
 
   const ctxValue: WorkspaceContextValue = {
     activeTab,
@@ -219,6 +293,7 @@ function RootLayout() {
     closeTab,
     closeActiveTab,
     runActiveQuery,
+    runAllQueries,
     loadMoreQuery,
     cancelActiveQuery,
     insertSql,
@@ -267,6 +342,7 @@ function RootLayout() {
                     defaultValue={activeTab.sql}
                     onValueChange={(sql) => updateTab(activeTab.id, { sql })}
                     onRun={runActiveQuery}
+                    onRunAll={runAllQueries}
                     onCancel={cancelActiveQuery}
                     isRunning={activeTab.isRunning}
                     connectionName={activeTab.connectionName}
