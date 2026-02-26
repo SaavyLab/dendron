@@ -6,19 +6,26 @@ import {
   useState,
 } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { EditorView, keymap } from "@codemirror/view";
-import { EditorState, Compartment } from "@codemirror/state";
+import { EditorView, keymap, Decoration, type DecorationSet } from "@codemirror/view";
+import { EditorState, Compartment, StateField } from "@codemirror/state";
 import { Prec } from "@codemirror/state";
 import { basicSetup } from "codemirror";
 import { sql, StandardSQL } from "@codemirror/lang-sql";
 import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
 import { tags } from "@lezer/highlight";
 import { api } from "@/lib/tauri";
+import { splitStatements, statementAtOffset, type SqlStatement } from "@/lib/sql-utils";
 import { Button } from "@/components/ui/Button";
 import { Spinner } from "@/components/ui/Spinner";
 
 export interface QueryEditorHandle {
   setValue: (sql: string) => void;
+  /** Returns the trimmed SQL of the current selection, or null if nothing is selected. */
+  getSelectedText: () => string | null;
+  /** Returns the statement under the cursor (when there are multiple statements). */
+  getStatementAtCursor: () => SqlStatement | null;
+  /** Returns all statements parsed from the editor content. */
+  getAllStatements: () => SqlStatement[];
 }
 
 interface QueryEditorProps {
@@ -26,10 +33,62 @@ interface QueryEditorProps {
   defaultValue: string;
   onValueChange: (value: string) => void;
   onRun: () => void;
+  onRunAll: () => void;
   onCancel: () => void;
   isRunning: boolean;
   connectionName: string | null;
 }
+
+// ── Active-statement highlighting ────────────────────────────
+const activeStatementLine = Decoration.line({
+  class: "cm-active-statement-line",
+});
+
+function computeActiveStatementDecorations(state: EditorState): DecorationSet {
+  const doc = state.doc.toString();
+  const statements = splitStatements(doc);
+
+  // Only highlight when there are 2+ statements
+  if (statements.length <= 1) return Decoration.none;
+
+  // Don't highlight when there's a selection — the selection itself is the indicator
+  const sel = state.selection.main;
+  if (!sel.empty) return Decoration.none;
+
+  const cursor = sel.head;
+  const active = statementAtOffset(statements, cursor);
+  if (!active) return Decoration.none;
+
+  const decos: ReturnType<typeof activeStatementLine.range>[] = [];
+  const fromPos = Math.max(0, active.from);
+  const toPos = Math.min(active.to, state.doc.length);
+
+  // Clamp to valid document range
+  if (fromPos >= state.doc.length) return Decoration.none;
+
+  const fromLine = state.doc.lineAt(fromPos);
+  const toLine = state.doc.lineAt(Math.max(fromPos, toPos - 1));
+
+  for (let lineNo = fromLine.number; lineNo <= toLine.number; lineNo++) {
+    const line = state.doc.line(lineNo);
+    decos.push(activeStatementLine.range(line.from));
+  }
+
+  return Decoration.set(decos, true);
+}
+
+const activeStatementField = StateField.define<DecorationSet>({
+  create(state) {
+    return computeActiveStatementDecorations(state);
+  },
+  update(_deco, tr) {
+    if (tr.docChanged || tr.selection) {
+      return computeActiveStatementDecorations(tr.state);
+    }
+    return computeActiveStatementDecorations(tr.state);
+  },
+  provide: (f) => EditorView.decorations.from(f),
+});
 
 // ── CodeMirror theme ────────────────────────────────────────
 const dendronTheme = EditorView.theme(
@@ -74,6 +133,11 @@ const dendronTheme = EditorView.theme(
       backgroundColor: "rgba(96,165,250,0.1)",
       color: "#60a5fa",
     },
+    // Active statement highlight — subtle left border + tinted background
+    ".cm-active-statement-line": {
+      backgroundColor: "rgba(96,165,250,0.035)",
+      borderLeft: "2px solid rgba(96,165,250,0.4)",
+    },
   },
   { dark: true }
 );
@@ -96,7 +160,7 @@ const dendronHighlight = syntaxHighlighting(
 
 // ── Component ────────────────────────────────────────────────
 export const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(
-  ({ tabId, defaultValue, onValueChange, onRun, onCancel, isRunning, connectionName }, ref) => {
+  ({ tabId, defaultValue, onValueChange, onRun, onRunAll, onCancel, isRunning, connectionName }, ref) => {
     const containerRef = useRef<HTMLDivElement>(null);
     const viewRef = useRef<EditorView | null>(null);
     const sqlCompartment = useRef(new Compartment());
@@ -117,6 +181,31 @@ export const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(
           selection: { anchor: value.length },
         });
       },
+
+      getSelectedText() {
+        const view = viewRef.current;
+        if (!view) return null;
+        const sel = view.state.selection.main;
+        if (sel.empty) return null;
+        const text = view.state.sliceDoc(sel.from, sel.to).trim();
+        return text || null;
+      },
+
+      getStatementAtCursor() {
+        const view = viewRef.current;
+        if (!view) return null;
+        const doc = view.state.doc.toString();
+        const statements = splitStatements(doc);
+        if (statements.length === 0) return null;
+        const cursor = view.state.selection.main.head;
+        return statementAtOffset(statements, cursor);
+      },
+
+      getAllStatements() {
+        const view = viewRef.current;
+        if (!view) return [];
+        return splitStatements(view.state.doc.toString());
+      },
     }));
 
     // ── Editor init (mount only) ──────────────────────────────
@@ -131,6 +220,7 @@ export const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(
             sqlCompartment.current.of(sql({ dialect: StandardSQL })),
             dendronTheme,
             dendronHighlight,
+            activeStatementField,
             Prec.highest(
               keymap.of([
                 {
@@ -140,6 +230,14 @@ export const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(
                 {
                   key: "Mod-Enter",
                   run: () => { onRun(); return true; },
+                },
+                {
+                  key: "Ctrl-Shift-Enter",
+                  run: () => { onRunAll(); return true; },
+                },
+                {
+                  key: "Mod-Shift-Enter",
+                  run: () => { onRunAll(); return true; },
                 },
               ])
             ),
@@ -220,11 +318,19 @@ export const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(
       setShowHistory(false);
     }
 
+    // ── Toolbar button style helpers ─────────────────────────
+    const btnBase = "flex items-center gap-1.5 h-6 px-2.5 rounded text-xs font-medium transition-colors disabled:opacity-40";
+    const connectedStyle = {
+      color: connectionName ? "var(--accent)" : "var(--text-muted)",
+      background: connectionName ? "var(--accent-muted)" : "transparent",
+      border: `1px solid ${connectionName ? "rgba(96,165,250,0.25)" : "var(--border)"}`,
+    };
+
     return (
       <div className="flex flex-col h-full overflow-hidden" style={{ background: "#111115" }}>
         {/* Toolbar */}
         <div
-          className="flex items-center gap-2 px-2 shrink-0 border-b"
+          className="flex items-center gap-1.5 px-2 shrink-0 border-b"
           style={{
             height: "var(--toolbar-height)",
             borderColor: "var(--border)",
@@ -234,7 +340,7 @@ export const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(
           {isRunning ? (
             <button
               onClick={onCancel}
-              className="flex items-center gap-1.5 h-6 px-2.5 rounded text-xs font-medium transition-colors"
+              className={btnBase}
               style={{
                 color: "var(--error)",
                 background: "rgba(248,113,113,0.08)",
@@ -245,29 +351,55 @@ export const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(
               <span>Cancel</span>
             </button>
           ) : (
-            <button
-              onClick={onRun}
-              disabled={!connectionName}
-              className="flex items-center gap-1.5 h-6 px-2.5 rounded text-xs font-medium transition-colors disabled:opacity-40"
-              style={{
-                color: connectionName ? "var(--accent)" : "var(--text-muted)",
-                background: connectionName ? "var(--accent-muted)" : "transparent",
-                border: `1px solid ${connectionName ? "rgba(96,165,250,0.25)" : "var(--border)"}`,
-              }}
-            >
-              <span style={{ fontSize: "10px" }}>▶</span>
-              <span>Run</span>
-              <kbd
-                style={{
-                  fontFamily: "var(--font-mono)",
-                  fontSize: "10px",
-                  color: "var(--text-muted)",
-                  marginLeft: "2px",
-                }}
+            <>
+              {/* Run (selection or cursor statement) */}
+              <button
+                onClick={onRun}
+                disabled={!connectionName}
+                className={btnBase}
+                style={connectedStyle}
+                title="Run selection or statement at cursor (Ctrl+Enter)"
               >
-                ⌃↵
-              </kbd>
-            </button>
+                <span style={{ fontSize: "10px" }}>&#9654;</span>
+                <span>Run</span>
+                <kbd
+                  style={{
+                    fontFamily: "var(--font-mono)",
+                    fontSize: "10px",
+                    color: "var(--text-muted)",
+                    marginLeft: "2px",
+                  }}
+                >
+                  &#8963;&#9166;
+                </kbd>
+              </button>
+
+              {/* Run All */}
+              <button
+                onClick={onRunAll}
+                disabled={!connectionName}
+                className={btnBase}
+                style={{
+                  color: connectionName ? "var(--text-secondary)" : "var(--text-muted)",
+                  background: "transparent",
+                  border: `1px solid ${connectionName ? "var(--border-strong)" : "var(--border)"}`,
+                }}
+                title="Run all statements (Ctrl+Shift+Enter)"
+              >
+                <span style={{ fontSize: "10px" }}>&#9654;&#9654;</span>
+                <span>Run All</span>
+                <kbd
+                  style={{
+                    fontFamily: "var(--font-mono)",
+                    fontSize: "10px",
+                    color: "var(--text-muted)",
+                    marginLeft: "2px",
+                  }}
+                >
+                  &#8963;&#8679;&#9166;
+                </kbd>
+              </button>
+            </>
           )}
 
           {/* History dropdown */}
@@ -296,7 +428,7 @@ export const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(
                 {historyQuery.isLoading && (
                   <div className="flex items-center gap-2 p-3" style={{ color: "var(--text-muted)", fontSize: "12px" }}>
                     <Spinner size="xs" />
-                    <span>Loading…</span>
+                    <span>Loading...</span>
                   </div>
                 )}
                 {(historyQuery.data ?? []).length === 0 && !historyQuery.isLoading && (
