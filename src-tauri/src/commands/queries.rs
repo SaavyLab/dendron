@@ -39,7 +39,7 @@ pub async fn execute_query(
     };
 
     let result = tokio::select! {
-        res = conn.execute_query(&effective_sql, has_order_by) => res.map_err(|e| e.to_string()),
+        res = conn.execute_query(&effective_sql, has_order_by, is_select) => res.map_err(|e| e.to_string()),
         _ = token.cancelled() => Err("Query was cancelled".to_string()),
     };
 

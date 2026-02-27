@@ -170,8 +170,10 @@ function RootLayout() {
       let lastResult = null;
       for (const stmt of statements) {
         const result = await api.queries.execute(tab.id, stmt.text);
-        // Keep the last result that has columns (i.e. a SELECT-like result)
+        // Prefer the last SELECT result; fall back to the last DML result
         if (result.columns.length > 0) {
+          lastResult = result;
+        } else if (!lastResult || lastResult.columns.length === 0) {
           lastResult = result;
         }
       }

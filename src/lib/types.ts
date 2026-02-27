@@ -8,6 +8,7 @@ export interface QueryResult {
   execution_time_ms: number;
   truncated: boolean;
   has_order_by: boolean;
+  affected_rows?: number;
 }
 
 export interface ColumnInfo {

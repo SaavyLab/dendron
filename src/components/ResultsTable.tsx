@@ -76,6 +76,28 @@ export function ResultsTable({ result, error, isRunning, onLoadMore }: ResultsTa
     );
   }
 
+  if (result.columns.length === 0 && result.affected_rows != null) {
+    return (
+      <div className="flex flex-col h-full overflow-hidden" style={{ background: "var(--bg-surface)" }}>
+        <Toolbar result={result} />
+        <div className="flex-1 flex flex-col items-center justify-center gap-2">
+          <span
+            style={{
+              fontFamily: "var(--font-mono)",
+              fontSize: "13px",
+              color: "var(--text-secondary)",
+            }}
+          >
+            {result.affected_rows.toLocaleString()} row{result.affected_rows !== 1 ? "s" : ""} affected
+          </span>
+          <span style={{ fontSize: "11px", color: "var(--text-muted)" }}>
+            {formatMs(result.execution_time_ms)}
+          </span>
+        </div>
+      </div>
+    );
+  }
+
   return <DataTable result={result} onLoadMore={onLoadMore} />;
 }
 

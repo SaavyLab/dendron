@@ -16,11 +16,33 @@ pub struct QueryResult {
     pub truncated: bool,
     #[serde(default)]
     pub has_order_by: bool,
+    /// Number of rows affected by INSERT/UPDATE/DELETE (None for SELECT)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub affected_rows: Option<u64>,
 }
 
 impl DatabaseConnection {
-    pub async fn execute_query(&self, sql: &str, has_order_by: bool) -> Result<QueryResult> {
+    pub async fn execute_query(&self, sql: &str, has_order_by: bool, is_select: bool) -> Result<QueryResult> {
         let start = std::time::Instant::now();
+
+        // For non-SELECT (INSERT/UPDATE/DELETE/etc.), use execute() to get affected row count.
+        if !is_select {
+            let affected = match self {
+                DatabaseConnection::Postgres(pool) => sqlx::query(sql).execute(pool).await?.rows_affected(),
+                DatabaseConnection::Sqlite(pool) => sqlx::query(sql).execute(pool).await?.rows_affected(),
+            };
+            let execution_time_ms = start.elapsed().as_millis();
+            return Ok(QueryResult {
+                columns: Vec::new(),
+                column_types: Vec::new(),
+                rows: Vec::new(),
+                row_count: 0,
+                execution_time_ms,
+                truncated: false,
+                has_order_by: true,
+                affected_rows: Some(affected),
+            });
+        }
 
         match self {
             DatabaseConnection::Postgres(pool) => {
@@ -164,7 +186,7 @@ impl DatabaseConnection {
                 }).collect();
 
                 let row_count = rows.len();
-                Ok(QueryResult { columns, column_types, rows, row_count, execution_time_ms, truncated, has_order_by })
+                Ok(QueryResult { columns, column_types, rows, row_count, execution_time_ms, truncated, has_order_by, affected_rows: None })
             }
             DatabaseConnection::Sqlite(pool) => {
                 let mut stream = sqlx::query(sql).fetch(pool);
@@ -222,7 +244,7 @@ impl DatabaseConnection {
                 }).collect();
 
                 let row_count = rows.len();
-                Ok(QueryResult { columns, column_types, rows, row_count, execution_time_ms, truncated, has_order_by })
+                Ok(QueryResult { columns, column_types, rows, row_count, execution_time_ms, truncated, has_order_by, affected_rows: None })
             }
         }
     }
