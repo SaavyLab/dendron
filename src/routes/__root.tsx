@@ -132,6 +132,19 @@ function RootLayout() {
 
   const closeActiveTab = useCallback(() => closeTab(activeTabId), [activeTabId, closeTab]);
 
+  const moveTab = useCallback((fromId: number, toId: number) => {
+    if (fromId === toId) return;
+    setTabs((prev) => {
+      const fromIdx = prev.findIndex((t) => t.id === fromId);
+      const toIdx = prev.findIndex((t) => t.id === toId);
+      if (fromIdx === -1 || toIdx === -1) return prev;
+      const next = [...prev];
+      const [moved] = next.splice(fromIdx, 1);
+      next.splice(toIdx, 0, moved);
+      return next;
+    });
+  }, []);
+
   /**
    * Smart run: if text is selected run the selection, otherwise run the
    * statement under the cursor.  Falls back to the full editor content when
@@ -407,6 +420,7 @@ function RootLayout() {
     addTab,
     closeTab,
     closeActiveTab,
+    moveTab,
     runActiveQuery,
     runAllQueries,
     loadMoreQuery,

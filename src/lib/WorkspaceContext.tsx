@@ -9,6 +9,7 @@ export interface WorkspaceContextValue {
   addTab: () => void;
   closeTab: (id: number) => void;
   closeActiveTab: () => void;
+  moveTab: (fromId: number, toId: number) => void;
   runActiveQuery: () => Promise<void>;
   runAllQueries: () => Promise<void>;
   loadMoreQuery: () => Promise<void>;
