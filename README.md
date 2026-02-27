@@ -63,12 +63,17 @@ dendron/
 # Install frontend dependencies
 bun install
 
+# (Optional) Spin up a local PostgreSQL instance with sample data
+docker compose up -d
+
 # Run in development mode (launches both the Vite dev server and the Tauri window)
 bun run tauri dev
 
 # Build a production bundle
 bun run tauri build
 ```
+
+The dev PostgreSQL container is pre-seeded with test data from `dev/postgres-init.sql`. There is also a `dev/sqlite-seed.sql` script for SQLite.
 
 ## Keyboard Shortcuts
 
@@ -85,6 +90,7 @@ bun run tauri build
 | `Cmd+[` / `Cmd+]` | Previous / next result sub-tab |
 | `Cmd+C` | Copy selected cell or row |
 
-## License
+## Documentation
 
-This project is proprietary software. All rights reserved.
+- **[SPEC.md](SPEC.md)** — MVP specification and design philosophy
+- **[ROADMAP.md](ROADMAP.md)** — Feature roadmap and architecture decisions
