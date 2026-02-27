@@ -176,16 +176,16 @@ export function ConnectionSidebar() {
       )}
 
       {/* Connection list with inline schema trees */}
-      <div className="overflow-y-auto flex-1">
+      <div className="overflow-y-auto flex-1 pt-1">
         {connectionsQuery.isLoading && (
-          <div className="flex items-center gap-2 px-3 py-2" style={{ color: "var(--text-muted)", fontSize: "12px" }}>
+          <div className="flex items-center gap-2 py-1" style={{ paddingLeft: "10px", color: "var(--text-muted)", fontSize: "11px" }}>
             <Spinner size="xs" />
-            <span>Loading…</span>
+            <span style={{ fontFamily: "var(--font-mono)" }}>Loading…</span>
           </div>
         )}
 
         {connections.length === 0 && !connectionsQuery.isLoading && (
-          <div className="px-3 py-3" style={{ color: "var(--text-muted)", fontSize: "12px" }}>
+          <div className="py-2" style={{ paddingLeft: "22px", color: "var(--text-muted)", fontSize: "11.5px", fontFamily: "var(--font-mono)" }}>
             No connections.{" "}
             <button
               onClick={openConnectionDialog}
@@ -196,21 +196,22 @@ export function ConnectionSidebar() {
           </div>
         )}
 
-        {connections.map((conn) => {
+        {connections.map((conn, i) => {
           const isOpen = openConnections.includes(conn.name);
           const isExpanded = expandedConnections.has(conn.name);
           const isActiveTab = activeTab.connectionName === conn.name;
           const isConnecting = connectingName === conn.name;
+          const isLast = i === connections.length - 1;
 
           return (
             <div key={conn.name}>
               {/* Connection row */}
               <div
                 className={cn(
-                  "group flex items-center gap-2 px-3 cursor-pointer border-b transition-colors",
-                  isActiveTab ? "bg-white/[0.04]" : "hover:bg-white/[0.025]"
+                  "group flex items-center gap-1.5 cursor-pointer transition-colors pr-2",
+                  isActiveTab ? "bg-white/[0.04]" : "hover:bg-white/[0.03]"
                 )}
-                style={{ height: "32px", borderColor: "var(--border-subtle)" }}
+                style={{ height: "28px", paddingLeft: "10px" }}
                 onClick={() => handleConnectionClick(conn)}
                 onContextMenu={(e) => {
                   const items = [];
@@ -223,7 +224,7 @@ export function ConnectionSidebar() {
                   showContextMenu(e, items);
                 }}
               >
-                {/* Expand chevron for open connections */}
+                {/* Expand chevron */}
                 <span
                   className="shrink-0 transition-transform"
                   style={{
@@ -240,18 +241,18 @@ export function ConnectionSidebar() {
 
                 {/* Type badge */}
                 <span
+                  className="shrink-0"
                   style={{
                     fontFamily: "var(--font-mono)",
                     fontSize: "9px",
                     color: conn.type === "postgres" ? "#818cf8" : "#fb923c",
                     background: conn.type === "postgres"
-                      ? "rgba(129,140,248,0.1)"
-                      : "rgba(251,146,60,0.1)",
-                    border: `1px solid ${conn.type === "postgres" ? "rgba(129,140,248,0.2)" : "rgba(251,146,60,0.2)"}`,
+                      ? "rgba(129,140,248,0.08)"
+                      : "rgba(251,146,60,0.08)",
+                    border: `1px solid ${conn.type === "postgres" ? "rgba(129,140,248,0.18)" : "rgba(251,146,60,0.18)"}`,
                     borderRadius: "3px",
                     padding: "0 4px",
                     lineHeight: "16px",
-                    flexShrink: 0,
                     textTransform: "uppercase",
                     letterSpacing: "0.04em",
                   }}
@@ -264,7 +265,7 @@ export function ConnectionSidebar() {
                   className="truncate flex-1"
                   style={{
                     fontFamily: "var(--font-mono)",
-                    fontSize: "12px",
+                    fontSize: "11.5px",
                     color: isActiveTab ? "var(--text-primary)" : isOpen ? "var(--text-secondary)" : "var(--text-muted)",
                   }}
                 >
@@ -304,8 +305,8 @@ export function ConnectionSidebar() {
                   <button
                     onClick={(e) => { e.stopPropagation(); doClose(conn.name); }}
                     title="Close connection"
-                    className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
-                    style={{ fontSize: "13px", color: "var(--text-muted)", padding: "2px 4px", lineHeight: 1 }}
+                    className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center"
+                    style={{ fontSize: "13px", color: "var(--text-muted)", width: "18px", height: "18px", lineHeight: 1 }}
                     onMouseEnter={(e) => ((e.currentTarget as HTMLButtonElement).style.color = "var(--error)")}
                     onMouseLeave={(e) => ((e.currentTarget as HTMLButtonElement).style.color = "var(--text-muted)")}
                   >
@@ -315,8 +316,8 @@ export function ConnectionSidebar() {
                   <button
                     onClick={(e) => { e.stopPropagation(); doDelete(conn.name); }}
                     title="Delete connection"
-                    className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
-                    style={{ fontSize: "13px", color: "var(--text-muted)", padding: "2px 4px", lineHeight: 1 }}
+                    className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center"
+                    style={{ fontSize: "13px", color: "var(--text-muted)", width: "18px", height: "18px", lineHeight: 1 }}
                     onMouseEnter={(e) => ((e.currentTarget as HTMLButtonElement).style.color = "var(--error)")}
                     onMouseLeave={(e) => ((e.currentTarget as HTMLButtonElement).style.color = "var(--text-muted)")}
                   >
@@ -328,6 +329,11 @@ export function ConnectionSidebar() {
               {/* Inline schema tree */}
               {isOpen && isExpanded && (
                 <SchemaTree connectionName={conn.name} collapseKey={collapseKey} />
+              )}
+
+              {/* Separator between connections (not after last, not when expanded into schema) */}
+              {!isLast && !(isOpen && isExpanded) && (
+                <div style={{ height: "1px", background: "var(--border-subtle)", marginLeft: "10px", marginRight: "8px" }} />
               )}
             </div>
           );

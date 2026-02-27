@@ -7,6 +7,12 @@ import { cn } from "@/lib/utils";
 import { Spinner } from "@/components/ui/Spinner";
 import { useContextMenu } from "@/components/ui/ContextMenu";
 
+// Indentation: each depth level indents by this many px.
+// depth 0 = schema (indented under connection), depth 1 = table, depth 2 = category, depth 3 = leaf
+const INDENT_PX = 12;
+const BASE_LEFT = 10; // base left padding to align with connection chevron area
+function indentPx(depth: number) { return BASE_LEFT + depth * INDENT_PX; }
+
 interface SchemaTreeProps {
   connectionName: string;
   collapseKey?: number;
@@ -20,16 +26,16 @@ export function SchemaTree({ connectionName, collapseKey }: SchemaTreeProps) {
 
   if (schemasQuery.isLoading) {
     return (
-      <div className="flex items-center gap-2 px-3 py-2" style={{ color: "var(--text-muted)", fontSize: "12px" }}>
+      <div className="flex items-center gap-2 py-1" style={{ paddingLeft: `${indentPx(0) + 10}px`, color: "var(--text-muted)", fontSize: "11px" }}>
         <Spinner size="xs" />
-        <span>Loading…</span>
+        <span style={{ fontFamily: "var(--font-mono)" }}>Loading…</span>
       </div>
     );
   }
 
   if (schemasQuery.isError) {
     return (
-      <div className="px-3 py-2" style={{ color: "var(--error)", fontSize: "11px", fontFamily: "var(--font-mono)" }}>
+      <div className="py-1" style={{ paddingLeft: `${indentPx(0) + 10}px`, color: "var(--error)", fontSize: "11px", fontFamily: "var(--font-mono)" }}>
         Failed to load schema
       </div>
     );
@@ -38,10 +44,12 @@ export function SchemaTree({ connectionName, collapseKey }: SchemaTreeProps) {
   const schemas = schemasQuery.data ?? [];
 
   return (
-    <div className="flex flex-col overflow-y-auto flex-1">
+    <div className="flex flex-col">
       {schemas.map((schema) => (
         <SchemaNode key={schema} schema={schema} connectionName={connectionName} collapseKey={collapseKey} />
       ))}
+      {/* Bottom separator after schema tree */}
+      <div style={{ height: "1px", background: "var(--border-subtle)", marginLeft: "10px", marginRight: "8px" }} />
     </div>
   );
 }
@@ -223,47 +231,44 @@ function CategoryGroup({
   return (
     <div>
       <div
-        className="px-2 group"
-        style={{ height: "22px" }}
+        className="flex items-center gap-1.5 cursor-pointer hover:bg-white/[0.03] transition-colors pr-2"
+        style={{ height: "22px", paddingLeft: `${indentPx(depth)}px` }}
+        onClick={() => setExpanded((e) => !e)}
       >
-        <div
-          className="flex items-center gap-1.5 h-full rounded-sm cursor-pointer hover:bg-white/[0.03] transition-colors"
-          style={{ paddingLeft: `${depth * 16 + 4}px` }}
-          onClick={() => setExpanded((e) => !e)}
+        <span
+          className="shrink-0 transition-transform"
+          style={{
+            fontSize: "9px",
+            color: "var(--text-muted)",
+            transform: expanded ? "rotate(90deg)" : "rotate(0deg)",
+            width: "10px",
+            display: "inline-flex",
+            justifyContent: "center",
+          }}
         >
-          <span
-            className="shrink-0 transition-transform"
-            style={{
-              fontSize: "9px",
-              color: "var(--text-muted)",
-              transform: expanded ? "rotate(90deg)" : "rotate(0deg)",
-              width: "10px",
-              display: "inline-flex",
-              justifyContent: "center",
-            }}
-          >
-            ›
-          </span>
-          <span
-            style={{
-              fontFamily: "var(--font-mono)",
-              fontSize: "11px",
-              color: "var(--text-muted)",
-            }}
-          >
-            {label}
-          </span>
-          <span
-            style={{
-              fontFamily: "var(--font-mono)",
-              fontSize: "10px",
-              color: "var(--text-muted)",
-              opacity: 0.5,
-            }}
-          >
-            {count}
-          </span>
-        </div>
+          ›
+        </span>
+        <span
+          style={{
+            fontFamily: "var(--font-mono)",
+            fontSize: "10px",
+            color: "var(--text-muted)",
+            textTransform: "uppercase",
+            letterSpacing: "0.04em",
+          }}
+        >
+          {label}
+        </span>
+        <span
+          style={{
+            fontFamily: "var(--font-mono)",
+            fontSize: "9px",
+            color: "var(--text-muted)",
+            opacity: 0.5,
+          }}
+        >
+          {count}
+        </span>
       </div>
       {expanded && children}
     </div>
@@ -273,38 +278,33 @@ function CategoryGroup({
 function ColumnRow({ col, onContextMenu }: { col: ColumnDetail; onContextMenu?: (e: React.MouseEvent) => void }) {
   return (
     <div
-      className="flex items-center px-2 group"
-      style={{ height: "22px" }}
+      className="flex items-center gap-1.5 pr-2 group"
+      style={{ height: "22px", paddingLeft: `${indentPx(3)}px` }}
       onContextMenu={onContextMenu}
     >
-      <div
-        className="flex items-center gap-1.5 w-full"
-        style={{ paddingLeft: "56px" }}
+      {col.is_primary_key && (
+        <span style={{ color: "var(--warning)", fontSize: "9px", flexShrink: 0 }}>⬡</span>
+      )}
+      <span
+        className="truncate"
+        style={{
+          fontFamily: "var(--font-mono)",
+          fontSize: "11px",
+          color: col.is_primary_key ? "var(--warning)" : "var(--text-secondary)",
+        }}
       >
-        {col.is_primary_key && (
-          <span style={{ color: "var(--warning)", fontSize: "9px", flexShrink: 0 }}>⬡</span>
-        )}
-        <span
-          className="truncate"
-          style={{
-            fontFamily: "var(--font-mono)",
-            fontSize: "11px",
-            color: col.is_primary_key ? "var(--warning)" : "var(--text-secondary)",
-          }}
-        >
-          {col.name}
-        </span>
-        <span
-          className="ml-auto shrink-0"
-          style={{
-            fontFamily: "var(--font-mono)",
-            fontSize: "10px",
-            color: "var(--text-muted)",
-          }}
-        >
-          {col.data_type.toLowerCase().replace("character varying", "varchar")}
-        </span>
-      </div>
+        {col.name}
+      </span>
+      <span
+        className="ml-auto shrink-0"
+        style={{
+          fontFamily: "var(--font-mono)",
+          fontSize: "10px",
+          color: "var(--text-muted)",
+        }}
+      >
+        {col.data_type.toLowerCase().replace("character varying", "varchar")}
+      </span>
     </div>
   );
 }
@@ -312,35 +312,30 @@ function ColumnRow({ col, onContextMenu }: { col: ColumnDetail; onContextMenu?: 
 function IndexRow({ idx }: { idx: IndexInfo }) {
   return (
     <div
-      className="flex items-center px-2"
-      style={{ height: "22px" }}
+      className="flex items-center gap-1.5 pr-2 min-w-0"
+      style={{ height: "22px", paddingLeft: `${indentPx(3)}px` }}
     >
-      <div
-        className="flex items-center gap-1.5 w-full min-w-0"
-        style={{ paddingLeft: "56px" }}
+      <span
+        className="truncate flex-1"
+        style={{
+          fontFamily: "var(--font-mono)",
+          fontSize: "11px",
+          color: "var(--text-secondary)",
+        }}
+        title={idx.name}
       >
-        <span
-          className="truncate flex-1"
-          style={{
-            fontFamily: "var(--font-mono)",
-            fontSize: "11px",
-            color: "var(--text-secondary)",
-          }}
-          title={idx.name}
-        >
-          {idx.name}
-        </span>
-        <span
-          className="shrink-0"
-          style={{
-            fontFamily: "var(--font-mono)",
-            fontSize: "10px",
-            color: "var(--text-muted)",
-          }}
-        >
-          {idx.is_primary ? "pk" : idx.is_unique ? "unique" : "idx"}
-        </span>
-      </div>
+        {idx.name}
+      </span>
+      <span
+        className="shrink-0"
+        style={{
+          fontFamily: "var(--font-mono)",
+          fontSize: "10px",
+          color: "var(--text-muted)",
+        }}
+      >
+        {idx.is_primary ? "pk" : idx.is_unique ? "unique" : "idx"}
+      </span>
     </div>
   );
 }
@@ -348,35 +343,30 @@ function IndexRow({ idx }: { idx: IndexInfo }) {
 function ForeignKeyRow({ fk }: { fk: ForeignKeyInfo }) {
   return (
     <div
-      className="flex items-center px-2"
-      style={{ height: "22px" }}
+      className="flex items-center gap-1.5 pr-2 min-w-0"
+      style={{ height: "22px", paddingLeft: `${indentPx(3)}px` }}
     >
-      <div
-        className="flex items-center gap-1.5 w-full min-w-0"
-        style={{ paddingLeft: "56px" }}
+      <span
+        className="truncate flex-1"
+        style={{
+          fontFamily: "var(--font-mono)",
+          fontSize: "11px",
+          color: "var(--text-secondary)",
+        }}
+        title={`${fk.columns.join(", ")} → ${fk.referenced_table}(${fk.referenced_columns.join(", ")})`}
       >
-        <span
-          className="truncate flex-1"
-          style={{
-            fontFamily: "var(--font-mono)",
-            fontSize: "11px",
-            color: "var(--text-secondary)",
-          }}
-          title={`${fk.columns.join(", ")} → ${fk.referenced_table}(${fk.referenced_columns.join(", ")})`}
-        >
-          {fk.columns.join(", ")}
-        </span>
-        <span
-          className="shrink-0"
-          style={{
-            fontFamily: "var(--font-mono)",
-            fontSize: "10px",
-            color: "var(--text-muted)",
-          }}
-        >
-          → {fk.referenced_table}
-        </span>
-      </div>
+        {fk.columns.join(", ")}
+      </span>
+      <span
+        className="shrink-0"
+        style={{
+          fontFamily: "var(--font-mono)",
+          fontSize: "10px",
+          color: "var(--text-muted)",
+        }}
+      >
+        → {fk.referenced_table}
+      </span>
     </div>
   );
 }
@@ -410,65 +400,58 @@ function TreeRow({
 }: TreeRowProps) {
   return (
     <div
-      className="px-2 group"
-      style={{ height: "28px" }}
+      className={cn(
+        "group flex items-center gap-1.5 cursor-pointer pr-2",
+        "hover:bg-white/[0.04] transition-colors"
+      )}
+      style={{ height: "26px", paddingLeft: `${indentPx(depth)}px` }}
+      onClick={(e) => {
+        if (onDoubleClick && e.detail === 2) return;
+        onClick?.();
+      }}
+      onDoubleClick={onDoubleClick}
+      onContextMenu={onContextMenu}
     >
-      <div
-        className={cn(
-          "flex items-center gap-1.5 h-full rounded-sm cursor-pointer",
-          "hover:bg-white/[0.04] transition-colors"
-        )}
-        style={{ paddingLeft: `${depth * 16 + 4}px` }}
-        onClick={(e) => {
-          // Skip the expand toggle on the second click of a double-click
-          if (onDoubleClick && e.detail === 2) return;
-          onClick?.();
-        }}
-        onDoubleClick={onDoubleClick}
-        onContextMenu={onContextMenu}
-      >
-        {/* Chevron — also clickable for expand/collapse */}
-        {isExpandable && (
-          <span
-            className="shrink-0 transition-transform"
-            style={{
-              fontSize: "9px",
-              color: "var(--text-muted)",
-              transform: isExpanded ? "rotate(90deg)" : "rotate(0deg)",
-              width: "14px",
-              height: "100%",
-              display: "inline-flex",
-              alignItems: "center",
-              justifyContent: "center",
-            }}
-            onClick={(e) => {
-              e.stopPropagation();
-              onToggleExpand?.();
-            }}
-          >
-            ›
-          </span>
-        )}
-
-        {/* Label */}
+      {/* Chevron */}
+      {isExpandable && (
         <span
-          className="truncate flex-1 text-left"
+          className="shrink-0 transition-transform"
           style={{
-            fontFamily: "var(--font-mono)",
-            fontSize: "12px",
-            ...labelStyle,
+            fontSize: "9px",
+            color: "var(--text-muted)",
+            transform: isExpanded ? "rotate(90deg)" : "rotate(0deg)",
+            width: "10px",
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggleExpand?.();
           }}
         >
-          {label}
+          ›
         </span>
+      )}
 
-        {/* Loading or action */}
-        {isLoading ? (
-          <Spinner size="xs" className="shrink-0 mr-1" />
-        ) : (
-          action
-        )}
-      </div>
+      {/* Label */}
+      <span
+        className="truncate flex-1 text-left"
+        style={{
+          fontFamily: "var(--font-mono)",
+          fontSize: "11.5px",
+          ...labelStyle,
+        }}
+      >
+        {label}
+      </span>
+
+      {/* Loading or action */}
+      {isLoading ? (
+        <Spinner size="xs" className="shrink-0" />
+      ) : (
+        action
+      )}
     </div>
   );
 }
