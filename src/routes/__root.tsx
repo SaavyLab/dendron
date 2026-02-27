@@ -1,7 +1,7 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import { createRootRoute, Outlet } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
-import { Group as PanelGroup, Panel, Separator as PanelResizeHandle } from "react-resizable-panels";
+import { Group as PanelGroup, Panel, Separator as PanelResizeHandle, useDefaultLayout } from "react-resizable-panels";
 import { WorkspaceContext, type WorkspaceContextValue } from "@/lib/WorkspaceContext";
 import type { Tab, EditableInfo, ConnectionInfo, ConnectionEnvironment } from "@/lib/types";
 import { envFromTags } from "@/lib/types";
@@ -15,22 +15,52 @@ import { ConnectionDialog } from "@/components/ConnectionDialog";
 import { CommandPalette } from "@/components/CommandPalette";
 import { DangerConfirmDialog, type DangerConfirmRequest } from "@/components/DangerConfirmDialog";
 
-let nextId = 2;
+const TABS_STORAGE_KEY = "dendron-tabs";
+const DEFAULT_TAB: Tab = {
+  id: 1,
+  label: "Query 1",
+  sql: "",
+  connectionName: null,
+  connectionEnv: null,
+  result: null,
+  error: null,
+  isRunning: false,
+};
 
-function RootLayout() {
-  const [tabs, setTabs] = useState<Tab[]>([
-    {
-      id: 1,
-      label: "Query 1",
-      sql: "",
-      connectionName: null,
-      connectionEnv: null,
+function restoreTabs(): { tabs: Tab[]; activeTabId: number; nextId: number } {
+  try {
+    const raw = localStorage.getItem(TABS_STORAGE_KEY);
+    if (!raw) return { tabs: [DEFAULT_TAB], activeTabId: 1, nextId: 2 };
+    const saved = JSON.parse(raw) as { tabs: Array<{ id: number; label: string; sql: string; connectionName: string | null; connectionEnv: string | null }>; activeTabId: number };
+    if (!Array.isArray(saved.tabs) || saved.tabs.length === 0) {
+      return { tabs: [DEFAULT_TAB], activeTabId: 1, nextId: 2 };
+    }
+    const tabs: Tab[] = saved.tabs.map((t) => ({
+      id: t.id,
+      label: t.label,
+      sql: t.sql,
+      connectionName: t.connectionName,
+      connectionEnv: (t.connectionEnv as Tab["connectionEnv"]) ?? null,
       result: null,
       error: null,
       isRunning: false,
-    },
-  ]);
-  const [activeTabId, setActiveTabId] = useState(1);
+    }));
+    const maxId = Math.max(...tabs.map((t) => t.id));
+    const activeTabId = tabs.some((t) => t.id === saved.activeTabId)
+      ? saved.activeTabId
+      : tabs[0].id;
+    return { tabs, activeTabId, nextId: maxId + 1 };
+  } catch {
+    return { tabs: [DEFAULT_TAB], activeTabId: 1, nextId: 2 };
+  }
+}
+
+const _restored = restoreTabs();
+let nextId = _restored.nextId;
+
+function RootLayout() {
+  const [tabs, setTabs] = useState<Tab[]>(_restored.tabs);
+  const [activeTabId, setActiveTabId] = useState(_restored.activeTabId);
   const [connectionDialogState, setConnectionDialogState] = useState<{ open: boolean; editing?: ConnectionInfo }>({ open: false });
   const [showCommandPalette, setShowCommandPalette] = useState(false);
   const [openConnections, setOpenConnections] = useState<string[]>([]);
@@ -40,6 +70,10 @@ function RootLayout() {
   } | null>(null);
   const editorRef = useRef<QueryEditorHandle | null>(null);
   const queryClient = useQueryClient();
+
+  // Persist panel layouts to localStorage
+  const mainLayout = useDefaultLayout({ id: "dendron-main", storage: localStorage });
+  const editorLayout = useDefaultLayout({ id: "dendron-editor", storage: localStorage });
 
   const activeTab = tabs.find((t) => t.id === activeTabId) ?? tabs[0];
 
@@ -313,6 +347,17 @@ function RootLayout() {
     api.connections.listOpen().then(setOpenConnections).catch(() => {});
   }, []);
 
+  // Persist tabs to localStorage (debounced)
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      const serializable = tabs.map(({ id, label, sql, connectionName, connectionEnv }) => ({
+        id, label, sql, connectionName, connectionEnv,
+      }));
+      localStorage.setItem(TABS_STORAGE_KEY, JSON.stringify({ tabs: serializable, activeTabId }));
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [tabs, activeTabId]);
+
   // Global keyboard shortcuts
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
@@ -386,9 +431,9 @@ function RootLayout() {
         className="flex flex-col h-full w-full overflow-hidden"
         style={{ background: "var(--bg-base)" }}
       >
-        <PanelGroup orientation="horizontal" className="flex-1 overflow-hidden">
+        <PanelGroup defaultLayout={mainLayout.defaultLayout} onLayoutChanged={mainLayout.onLayoutChanged} orientation="horizontal" className="flex-1 overflow-hidden">
           {/* ── Sidebar ───────────────────────────────────── */}
-          <Panel defaultSize={18} minSize={10}>
+          <Panel defaultSize={20} minSize={10}>
             <div
               className="flex flex-col h-full overflow-hidden border-r"
               style={{ borderColor: "var(--border)", background: "var(--bg-surface)" }}
@@ -404,8 +449,8 @@ function RootLayout() {
             <div className="flex flex-col h-full overflow-hidden">
               <TabBar />
 
-              <PanelGroup orientation="vertical" className="flex-1 overflow-hidden">
-                <Panel defaultSize={40} minSize={15}>
+              <PanelGroup defaultLayout={editorLayout.defaultLayout} onLayoutChanged={editorLayout.onLayoutChanged} orientation="vertical" className="flex-1 overflow-hidden">
+                <Panel defaultSize={35} minSize={15}>
                   <QueryEditor
                     key={activeTab.id}
                     ref={editorRef}
