@@ -7,7 +7,7 @@ import {
   type ColumnSizingState,
 } from "@tanstack/react-table";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import type { QueryResult, EditableInfo, PkColumn } from "@/lib/types";
+import type { QueryResult, EditableInfo, PkColumn, StatementResult } from "@/lib/types";
 import { Badge } from "@/components/ui/Badge";
 import { Spinner } from "@/components/ui/Spinner";
 import { Button } from "@/components/ui/Button";
@@ -23,12 +23,102 @@ interface ResultsTableProps {
   onLoadMore: () => Promise<void>;
   editableInfo?: EditableInfo | null;
   tabId: number;
+  /** Multi-result mode: array of results from Run All. */
+  results?: StatementResult[] | null;
+  /** Which sub-tab is active (0-based). */
+  activeResultIndex?: number;
+  /** Callback to switch active result sub-tab. */
+  onActiveResultChange?: (index: number) => void;
 }
 
 const ROW_HEIGHT = 28;
 const HEADER_HEIGHT = 28;
 
-export function ResultsTable({ result, error, isRunning, onLoadMore, editableInfo, tabId }: ResultsTableProps) {
+export function ResultsTable({ result, error, isRunning, onLoadMore, editableInfo, tabId, results, activeResultIndex, onActiveResultChange }: ResultsTableProps) {
+  // ── Multi-result mode ─────────────────────────────────────
+  if (results && results.length > 1) {
+    const idx = activeResultIndex ?? 0;
+    const active = results[idx];
+    const activeResult = active?.result ?? null;
+    const activeEditable = active?.editableInfo ?? null;
+
+    return (
+      <div className="flex flex-col h-full overflow-hidden" style={{ background: "var(--bg-surface)" }}>
+        <ResultSubTabs
+          results={results}
+          activeIndex={idx}
+          onChange={onActiveResultChange ?? (() => {})}
+        />
+        {isRunning ? (
+          <>
+            <Toolbar />
+            <div className="flex-1 flex flex-col items-center justify-center gap-3">
+              <Spinner size="md" />
+              <span style={{ fontSize: "12px", color: "var(--text-muted)" }}>Executing query…</span>
+            </div>
+          </>
+        ) : error && !activeResult ? (
+          <>
+            <Toolbar />
+            <div className="flex-1 p-4 overflow-auto selectable">
+              <div
+                className="rounded p-3"
+                style={{
+                  fontFamily: "var(--font-mono)",
+                  fontSize: "12px",
+                  color: "var(--error)",
+                  background: "rgba(248,113,113,0.05)",
+                  border: "1px solid rgba(248,113,113,0.15)",
+                  whiteSpace: "pre-wrap",
+                  lineHeight: 1.6,
+                }}
+              >
+                {error}
+              </div>
+            </div>
+          </>
+        ) : activeResult ? (
+          activeResult.columns.length === 0 && activeResult.affected_rows != null ? (
+            <>
+              <Toolbar result={activeResult} />
+              <div className="flex-1 flex flex-col items-center justify-center gap-2">
+                <span style={{ fontFamily: "var(--font-mono)", fontSize: "13px", color: "var(--text-secondary)" }}>
+                  {activeResult.affected_rows.toLocaleString()} row{activeResult.affected_rows !== 1 ? "s" : ""} affected
+                </span>
+                <span style={{ fontSize: "11px", color: "var(--text-muted)" }}>
+                  {formatMs(activeResult.execution_time_ms)}
+                </span>
+              </div>
+              {error && (
+                <div className="shrink-0 p-3 border-t" style={{ fontFamily: "var(--font-mono)", fontSize: "12px", color: "var(--error)", borderColor: "var(--border)", background: "rgba(248,113,113,0.05)" }}>
+                  {error}
+                </div>
+              )}
+            </>
+          ) : (
+            <>
+              <DataTable result={activeResult} onLoadMore={onLoadMore} editableInfo={activeEditable} tabId={tabId} />
+              {error && (
+                <div className="shrink-0 p-3 border-t" style={{ fontFamily: "var(--font-mono)", fontSize: "12px", color: "var(--error)", borderColor: "var(--border)", background: "rgba(248,113,113,0.05)" }}>
+                  {error}
+                </div>
+              )}
+            </>
+          )
+        ) : (
+          <>
+            <Toolbar />
+            <div className="flex-1 flex flex-col items-center justify-center gap-2">
+              <div style={{ fontSize: "24px", opacity: 0.15 }}>⌥</div>
+              <span style={{ fontSize: "12px", color: "var(--text-muted)" }}>No result</span>
+            </div>
+          </>
+        )}
+      </div>
+    );
+  }
+
+  // ── Single-result mode (unchanged) ────────────────────────
   if (isRunning) {
     return (
       <div className="flex flex-col h-full overflow-hidden" style={{ background: "var(--bg-surface)" }}>
@@ -232,6 +322,89 @@ function Toolbar({
           </Button>
         </div>
       )}
+    </div>
+  );
+}
+
+/** Sub-tab strip for multi-result mode — one tab per statement. */
+function ResultSubTabs({
+  results,
+  activeIndex,
+  onChange,
+}: {
+  results: StatementResult[];
+  activeIndex: number;
+  onChange: (index: number) => void;
+}) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  // Auto-scroll active tab into view
+  useEffect(() => {
+    const container = scrollRef.current;
+    if (!container) return;
+    const activeEl = container.children[activeIndex] as HTMLElement | undefined;
+    activeEl?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }, [activeIndex]);
+
+  return (
+    <div
+      ref={scrollRef}
+      className="flex items-stretch overflow-x-auto shrink-0 border-b"
+      style={{
+        height: "26px",
+        background: "var(--bg-elevated)",
+        borderColor: "var(--border)",
+      }}
+    >
+      {results.map((sr, i) => {
+        const isActive = i === activeIndex;
+        const isDml = sr.result.columns.length === 0;
+        return (
+          <button
+            key={i}
+            onClick={() => onChange(i)}
+            className="relative flex items-center gap-1.5 px-2.5 border-r shrink-0 transition-colors"
+            style={{
+              borderColor: "var(--border)",
+              fontFamily: "var(--font-mono)",
+              fontSize: "10px",
+              letterSpacing: "0.02em",
+              color: isActive
+                ? "var(--text-primary)"
+                : isDml
+                ? "var(--text-muted)"
+                : "var(--text-secondary)",
+              opacity: isActive ? 1 : isDml ? 0.6 : 0.8,
+              background: isActive ? "rgba(255,255,255,0.03)" : "transparent",
+              cursor: "pointer",
+              whiteSpace: "nowrap",
+            }}
+            onMouseEnter={(e) => {
+              if (!isActive) (e.currentTarget as HTMLButtonElement).style.background = "rgba(255,255,255,0.03)";
+            }}
+            onMouseLeave={(e) => {
+              if (!isActive) (e.currentTarget as HTMLButtonElement).style.background = "transparent";
+            }}
+          >
+            {isActive && (
+              <div
+                className="absolute bottom-0 left-0 right-0"
+                style={{ height: "1px", background: "var(--accent)" }}
+              />
+            )}
+            <span style={{ color: "var(--text-muted)", fontSize: "9px" }}>{sr.index}.</span>
+            <span>{sr.label}</span>
+          </button>
+        );
+      })}
+      <div className="flex-1" />
+      <div
+        className="flex items-center pr-2 gap-2"
+        style={{ fontSize: "9px", color: "var(--text-muted)", fontFamily: "var(--font-mono)", opacity: 0.5 }}
+      >
+        <span>⌃[</span>
+        <span>⌃]</span>
+      </div>
     </div>
   );
 }

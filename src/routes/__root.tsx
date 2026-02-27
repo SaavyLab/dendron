@@ -3,8 +3,9 @@ import { createRootRoute, Outlet } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { Group as PanelGroup, Panel, Separator as PanelResizeHandle, useDefaultLayout } from "react-resizable-panels";
 import { WorkspaceContext, type WorkspaceContextValue } from "@/lib/WorkspaceContext";
-import type { Tab, EditableInfo, ConnectionInfo, ConnectionEnvironment } from "@/lib/types";
+import type { Tab, EditableInfo, ConnectionInfo, ConnectionEnvironment, StatementResult } from "@/lib/types";
 import { envFromTags } from "@/lib/types";
+import { deriveStatementLabel } from "@/lib/sql-utils";
 import { api } from "@/lib/tauri";
 import { TabBar } from "@/components/TabBar";
 import { ConnectionSidebar } from "@/components/ConnectionSidebar";
@@ -25,6 +26,8 @@ const DEFAULT_TAB: Tab = {
   result: null,
   error: null,
   isRunning: false,
+  results: null,
+  activeResultIndex: 0,
 };
 
 function restoreTabs(): { tabs: Tab[]; activeTabId: number; nextId: number } {
@@ -44,6 +47,8 @@ function restoreTabs(): { tabs: Tab[]; activeTabId: number; nextId: number } {
       result: null,
       error: null,
       isRunning: false,
+      results: null,
+      activeResultIndex: 0,
     }));
     const maxId = Math.max(...tabs.map((t) => t.id));
     const activeTabId = tabs.some((t) => t.id === saved.activeTabId)
@@ -108,6 +113,8 @@ function RootLayout() {
         result: null,
         error: null,
         isRunning: false,
+        results: null,
+        activeResultIndex: 0,
       },
     ]);
     setActiveTabId(id);
@@ -195,7 +202,7 @@ function RootLayout() {
       // If safety check fails, proceed anyway
     }
 
-    updateTab(tab.id, { isRunning: true, error: null, result: null, editableInfo: null });
+    updateTab(tab.id, { isRunning: true, error: null, result: null, editableInfo: null, results: null, activeResultIndex: 0 });
 
     try {
       const result = await api.queries.execute(tab.id, sqlToRun);
@@ -212,9 +219,10 @@ function RootLayout() {
   }, [tabs, activeTabId, updateTab, showDangerConfirm]);
 
   /**
-   * Run all statements in the editor sequentially.  Shows the result of
-   * the last statement that produces output (typically a SELECT).  Stops
-   * on the first error.
+   * Run all statements in the editor sequentially.  Collects every result
+   * into a StatementResult[] so the user can browse each one via sub-tabs.
+   * Falls back to single-result mode when there's only 1 statement.
+   * Stops on the first error but keeps partial results collected so far.
    */
   const runAllQueries = useCallback(async () => {
     const tab = tabs.find((t) => t.id === activeTabId);
@@ -247,36 +255,99 @@ function RootLayout() {
       // If safety check fails, proceed anyway
     }
 
-    updateTab(tab.id, { isRunning: true, error: null, result: null, editableInfo: null });
+    updateTab(tab.id, { isRunning: true, error: null, result: null, editableInfo: null, results: null, activeResultIndex: 0 });
+
+    // Single statement — use existing single-result mode (no sub-tabs)
+    if (statements.length === 1) {
+      try {
+        const result = await api.queries.execute(tab.id, statements[0].text);
+        await api.queries.addHistory(tab.sql).catch(() => {});
+        let editableInfo: EditableInfo | null = null;
+        if (result.columns.length > 0) {
+          try { editableInfo = await api.queries.getEditableInfo(tab.id, statements[0].text); } catch {}
+        }
+        updateTab(tab.id, { result, isRunning: false, editableInfo });
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        updateTab(tab.id, { error: msg, isRunning: false });
+      }
+      return;
+    }
+
+    // Multiple statements — collect all results
+    const collected: StatementResult[] = [];
+    let lastSelectIdx = -1;
 
     try {
-      let lastResult = null;
-      let lastSelectSql: string | null = null;
-      for (const stmt of statements) {
+      for (let i = 0; i < statements.length; i++) {
+        const stmt = statements[i];
         const result = await api.queries.execute(tab.id, stmt.text);
-        // Prefer the last SELECT result; fall back to the last DML result
+        let editableInfo: EditableInfo | null = null;
         if (result.columns.length > 0) {
-          lastResult = result;
-          lastSelectSql = stmt.text;
-        } else if (!lastResult || lastResult.columns.length === 0) {
-          lastResult = result;
+          lastSelectIdx = i;
+          try { editableInfo = await api.queries.getEditableInfo(tab.id, stmt.text); } catch {}
         }
+        collected.push({
+          index: i + 1,
+          sql: stmt.text,
+          label: deriveStatementLabel(stmt.text, result),
+          result,
+          editableInfo,
+        });
       }
       await api.queries.addHistory(tab.sql).catch(() => {});
-      let editableInfo: EditableInfo | null = null;
-      if (lastSelectSql && lastResult && lastResult.columns.length > 0) {
-        try { editableInfo = await api.queries.getEditableInfo(tab.id, lastSelectSql); } catch {}
-      }
-      updateTab(tab.id, { result: lastResult, isRunning: false, editableInfo });
+      // Auto-focus the last SELECT result, or the last result if no SELECTs
+      const focusIdx = lastSelectIdx >= 0 ? lastSelectIdx : collected.length - 1;
+      updateTab(tab.id, { results: collected, activeResultIndex: focusIdx, isRunning: false });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      updateTab(tab.id, { error: msg, isRunning: false });
+      if (collected.length > 0) {
+        // Show partial results + error
+        const focusIdx = lastSelectIdx >= 0 ? lastSelectIdx : collected.length - 1;
+        updateTab(tab.id, { results: collected, activeResultIndex: focusIdx, error: msg, isRunning: false });
+      } else {
+        updateTab(tab.id, { error: msg, isRunning: false });
+      }
     }
   }, [tabs, activeTabId, updateTab, showDangerConfirm]);
 
   const loadMoreQuery = useCallback(async () => {
     const tab = tabs.find((t) => t.id === activeTabId);
-    if (!tab || tab.isRunning || !tab.result?.truncated) return;
+    if (!tab || tab.isRunning) return;
+
+    // Multi-result mode
+    if (tab.results) {
+      const active = tab.results[tab.activeResultIndex];
+      if (!active || !active.result.truncated) return;
+      const offset = active.result.rows.length;
+      try {
+        const page = await api.queries.execute(tab.id, active.sql, offset);
+        const updatedResults = tab.results.map((sr, i) =>
+          i === tab.activeResultIndex
+            ? {
+                ...sr,
+                result: {
+                  ...page,
+                  rows: [...sr.result.rows, ...page.rows],
+                  row_count: sr.result.rows.length + page.rows.length,
+                  has_order_by: sr.result.has_order_by,
+                },
+                label: deriveStatementLabel(sr.sql, {
+                  ...page,
+                  row_count: sr.result.rows.length + page.rows.length,
+                }),
+              }
+            : sr
+        );
+        updateTab(tab.id, { results: updatedResults });
+      } catch {
+        // Don't clobber existing results on load-more failure
+      }
+      return;
+    }
+
+    // Single-result mode
+    if (!tab.result?.truncated) return;
     const offset = tab.result.rows.length;
     try {
       const page = await api.queries.execute(tab.id, tab.sql, offset);
@@ -322,6 +393,8 @@ function RootLayout() {
         result: null,
         error: null,
         isRunning: !!autoRun,
+        results: null,
+        activeResultIndex: 0,
       },
     ]);
     setActiveTabId(id);
@@ -399,6 +472,20 @@ function RootLayout() {
         } else {
           setActiveTabId(tabs[(idx + 1) % tabs.length].id);
         }
+      } else if (mod && e.key === "[") {
+        // Ctrl+[ — previous result sub-tab
+        e.preventDefault();
+        const tab = tabs.find((t) => t.id === activeTabId);
+        if (tab?.results && tab.results.length > 1) {
+          updateTab(tab.id, { activeResultIndex: (tab.activeResultIndex - 1 + tab.results.length) % tab.results.length });
+        }
+      } else if (mod && e.key === "]") {
+        // Ctrl+] — next result sub-tab
+        e.preventDefault();
+        const tab = tabs.find((t) => t.id === activeTabId);
+        if (tab?.results && tab.results.length > 1) {
+          updateTab(tab.id, { activeResultIndex: (tab.activeResultIndex + 1) % tab.results.length });
+        }
       } else if (e.key === "Escape") {
         if (showCommandPalette) {
           setShowCommandPalette(false);
@@ -410,7 +497,7 @@ function RootLayout() {
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [runActiveQuery, runAllQueries, addTab, closeActiveTab, cancelActiveQuery, tabs, activeTabId, showCommandPalette]);
+  }, [runActiveQuery, runAllQueries, addTab, closeActiveTab, cancelActiveQuery, tabs, activeTabId, showCommandPalette, updateTab]);
 
   const ctxValue: WorkspaceContextValue = {
     activeTab,
@@ -495,6 +582,9 @@ function RootLayout() {
                     onLoadMore={loadMoreQuery}
                     editableInfo={activeTab.editableInfo}
                     tabId={activeTab.id}
+                    results={activeTab.results}
+                    activeResultIndex={activeTab.activeResultIndex}
+                    onActiveResultChange={(idx) => updateTab(activeTab.id, { activeResultIndex: idx })}
                   />
                 </Panel>
               </PanelGroup>

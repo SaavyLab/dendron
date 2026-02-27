@@ -126,6 +126,21 @@ export function splitStatements(sql: string): SqlStatement[] {
 }
 
 /**
+ * Derive a short label for a statement result sub-tab.
+ * E.g. "SELECT (42 rows)", "INSERT (3 rows)", "CREATE TABLE".
+ */
+export function deriveStatementLabel(sql: string, result: import("./types").QueryResult): string {
+  const firstWord = sql.trimStart().split(/[\s(]+/, 1)[0].toUpperCase();
+  if (result.columns.length > 0) {
+    return `${firstWord} (${result.row_count.toLocaleString()} row${result.row_count !== 1 ? "s" : ""})`;
+  }
+  if (result.affected_rows != null) {
+    return `${firstWord} (${result.affected_rows.toLocaleString()} row${result.affected_rows !== 1 ? "s" : ""})`;
+  }
+  return firstWord;
+}
+
+/**
  * Find the statement that contains the given cursor offset.
  *
  * - If the offset falls within a statement's region, that statement is returned.

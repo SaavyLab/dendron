@@ -121,6 +121,18 @@ export interface PkColumn {
   value: string;
 }
 
+/** One statement's result within a multi-statement batch. */
+export interface StatementResult {
+  /** 1-based index within the batch. */
+  index: number;
+  /** The SQL that produced this result. */
+  sql: string;
+  /** Human label for the sub-tab, e.g. "SELECT (42 rows)" or "INSERT (3 rows)". */
+  label: string;
+  result: QueryResult;
+  editableInfo?: EditableInfo | null;
+}
+
 // Tab state (frontend only)
 export interface Tab {
   id: number;
@@ -132,4 +144,8 @@ export interface Tab {
   error: string | null;
   isRunning: boolean;
   editableInfo?: EditableInfo | null;
+  /** Multi-result mode: non-null when Run All produced >1 statement. */
+  results: StatementResult[] | null;
+  /** Which sub-tab is active (0-based index into results). */
+  activeResultIndex: number;
 }
