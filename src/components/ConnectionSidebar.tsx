@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/tauri";
 import type { ConnectionInfo } from "@/lib/types";
+import { envFromTags, ENV_META } from "@/lib/types";
 import { useWorkspace } from "@/lib/WorkspaceContext";
 import { SchemaTree } from "@/components/SchemaTree";
 import { Spinner } from "@/components/ui/Spinner";
@@ -13,6 +14,7 @@ export function ConnectionSidebar() {
     activeTab,
     updateTab,
     openConnectionDialog,
+    editConnectionDialog,
     openConnections,
     openConnection,
     closeConnection,
@@ -24,6 +26,7 @@ export function ConnectionSidebar() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   // Track which open connections have their schema tree expanded
   const [expandedConnections, setExpandedConnections] = useState<Set<string>>(new Set());
+  const [collapseKey, setCollapseKey] = useState(0);
 
   const connectionsQuery = useQuery({
     queryKey: ["connections"],
@@ -66,7 +69,8 @@ export function ConnectionSidebar() {
       await openSqlInNewTab(conn.name, "");
     } else {
       await api.connections.setTabConnection(activeTab.id, conn.name);
-      updateTab(activeTab.id, { connectionName: conn.name, label: conn.name });
+      const connectionEnv = envFromTags(conn.tags);
+      updateTab(activeTab.id, { connectionName: conn.name, connectionEnv, label: conn.name });
     }
   }
 
@@ -80,7 +84,7 @@ export function ConnectionSidebar() {
       });
       if (activeTab.connectionName === name) {
         await api.connections.setTabConnection(activeTab.id, null);
-        updateTab(activeTab.id, { connectionName: null, label: `Query ${activeTab.id}` });
+        updateTab(activeTab.id, { connectionName: null, connectionEnv: null, label: `Query ${activeTab.id}` });
       }
     } catch {
       // ignore
@@ -117,22 +121,43 @@ export function ConnectionSidebar() {
         >
           Connections
         </span>
-        <button
-          onClick={openConnectionDialog}
-          title="New connection"
-          className="flex items-center justify-center w-6 h-6 rounded transition-colors"
-          style={{ color: "var(--text-muted)", fontSize: "16px" }}
-          onMouseEnter={(e) => {
-            (e.currentTarget as HTMLButtonElement).style.color = "var(--text-primary)";
-            (e.currentTarget as HTMLButtonElement).style.background = "rgba(255,255,255,0.06)";
-          }}
-          onMouseLeave={(e) => {
-            (e.currentTarget as HTMLButtonElement).style.color = "var(--text-muted)";
-            (e.currentTarget as HTMLButtonElement).style.background = "transparent";
-          }}
-        >
-          +
-        </button>
+        <div className="flex items-center gap-0.5">
+          <button
+            onClick={() => {
+              setCollapseKey((k) => k + 1);
+              setExpandedConnections(new Set());
+            }}
+            title="Collapse all"
+            className="flex items-center justify-center w-6 h-6 rounded transition-colors"
+            style={{ color: "var(--text-muted)", fontSize: "11px" }}
+            onMouseEnter={(e) => {
+              (e.currentTarget as HTMLButtonElement).style.color = "var(--text-primary)";
+              (e.currentTarget as HTMLButtonElement).style.background = "rgba(255,255,255,0.06)";
+            }}
+            onMouseLeave={(e) => {
+              (e.currentTarget as HTMLButtonElement).style.color = "var(--text-muted)";
+              (e.currentTarget as HTMLButtonElement).style.background = "transparent";
+            }}
+          >
+            ⊟
+          </button>
+          <button
+            onClick={openConnectionDialog}
+            title="New connection"
+            className="flex items-center justify-center w-6 h-6 rounded transition-colors"
+            style={{ color: "var(--text-muted)", fontSize: "16px" }}
+            onMouseEnter={(e) => {
+              (e.currentTarget as HTMLButtonElement).style.color = "var(--text-primary)";
+              (e.currentTarget as HTMLButtonElement).style.background = "rgba(255,255,255,0.06)";
+            }}
+            onMouseLeave={(e) => {
+              (e.currentTarget as HTMLButtonElement).style.color = "var(--text-muted)";
+              (e.currentTarget as HTMLButtonElement).style.background = "transparent";
+            }}
+          >
+            +
+          </button>
+        </div>
       </div>
 
       {/* Error */}
@@ -193,7 +218,8 @@ export function ConnectionSidebar() {
                     items.push({ label: "Open in new tab", onClick: () => openSqlInNewTab(conn.name, "") });
                     items.push({ label: "Close connection", separator: true, onClick: () => doClose(conn.name) });
                   }
-                  items.push({ label: "Delete connection", separator: !isOpen, onClick: () => doDelete(conn.name) });
+                  items.push({ label: "Edit connection", onClick: () => editConnectionDialog(conn) });
+                  items.push({ label: "Delete connection", separator: false, onClick: () => doDelete(conn.name) });
                   showContextMenu(e, items);
                 }}
               >
@@ -245,6 +271,32 @@ export function ConnectionSidebar() {
                   {conn.name}
                 </span>
 
+                {/* Environment badge */}
+                {(() => {
+                  const env = envFromTags(conn.tags);
+                  if (!env) return null;
+                  const meta = ENV_META[env];
+                  return (
+                    <span
+                      className="shrink-0"
+                      style={{
+                        fontFamily: "var(--font-mono)",
+                        fontSize: "8px",
+                        color: meta.color,
+                        background: meta.bg,
+                        border: `1px solid ${meta.border}`,
+                        borderRadius: "3px",
+                        padding: "0 3px",
+                        lineHeight: "14px",
+                        letterSpacing: "0.04em",
+                        fontWeight: 600,
+                      }}
+                    >
+                      {meta.label}
+                    </span>
+                  );
+                })()}
+
                 {/* Actions */}
                 {isConnecting ? (
                   <Spinner size="xs" className="shrink-0" />
@@ -275,7 +327,7 @@ export function ConnectionSidebar() {
 
               {/* Inline schema tree */}
               {isOpen && isExpanded && (
-                <SchemaTree connectionName={conn.name} />
+                <SchemaTree connectionName={conn.name} collapseKey={collapseKey} />
               )}
             </div>
           );

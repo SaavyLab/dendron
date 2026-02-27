@@ -1,8 +1,11 @@
 import { useWorkspace } from "@/lib/WorkspaceContext";
 import { cn } from "@/lib/utils";
+import { useContextMenu } from "@/components/ui/ContextMenu";
+import { ENV_META } from "@/lib/types";
 
 export function TabBar() {
   const { tabs, activeTab, setActiveTabId, addTab, closeTab } = useWorkspace();
+  const { showContextMenu, contextMenuElement } = useContextMenu();
 
   return (
     <div
@@ -15,10 +18,32 @@ export function TabBar() {
     >
       {tabs.map((tab) => {
         const isActive = tab.id === activeTab.id;
+        const envMeta = tab.connectionEnv ? ENV_META[tab.connectionEnv] : null;
         return (
           <button
             key={tab.id}
             onClick={() => setActiveTabId(tab.id)}
+            onAuxClick={(e) => {
+              if (e.button === 1 && tabs.length > 1) {
+                e.preventDefault();
+                closeTab(tab.id);
+              }
+            }}
+            onContextMenu={(e) => {
+              const idx = tabs.findIndex((t) => t.id === tab.id);
+              const items = [
+                { label: "Close", onClick: () => closeTab(tab.id) },
+                {
+                  label: "Close others",
+                  onClick: () => tabs.forEach((t) => { if (t.id !== tab.id) closeTab(t.id); }),
+                },
+                {
+                  label: "Close to the right",
+                  onClick: () => tabs.slice(idx + 1).forEach((t) => closeTab(t.id)),
+                },
+              ];
+              showContextMenu(e, items);
+            }}
             className={cn(
               "group relative flex items-center gap-2 px-3 border-r text-[12px] whitespace-nowrap",
               "transition-colors min-w-0 max-w-[200px] shrink-0",
@@ -28,11 +53,11 @@ export function TabBar() {
             )}
             style={{ borderColor: "var(--border)" }}
           >
-            {/* Active underline */}
+            {/* Active underline — env-colored when set */}
             {isActive && (
               <div
                 className="absolute bottom-0 left-0 right-0"
-                style={{ height: "1px", background: "var(--accent)" }}
+                style={{ height: envMeta ? "2px" : "1px", background: envMeta?.color ?? "var(--accent)" }}
               />
             )}
 
@@ -42,6 +67,27 @@ export function TabBar() {
                 className="shrink-0 w-1.5 h-1.5 rounded-full bg-blue-400"
                 style={{ animation: "blink 1.2s ease-in-out infinite" }}
               />
+            )}
+
+            {/* Environment badge */}
+            {envMeta && (
+              <span
+                className="shrink-0"
+                style={{
+                  fontFamily: "var(--font-mono)",
+                  fontSize: "8px",
+                  color: envMeta.color,
+                  background: envMeta.bg,
+                  border: `1px solid ${envMeta.border}`,
+                  borderRadius: "2px",
+                  padding: "0 3px",
+                  lineHeight: "13px",
+                  letterSpacing: "0.04em",
+                  fontWeight: 600,
+                }}
+              >
+                {envMeta.label}
+              </span>
             )}
 
             <span className="truncate flex-1 text-left">{tab.label}</span>
@@ -96,7 +142,10 @@ export function TabBar() {
       >
         <span>⌃T</span>
         <span>⌃W</span>
+        <span>⌃Tab</span>
       </div>
+
+      {contextMenuElement}
     </div>
   );
 }

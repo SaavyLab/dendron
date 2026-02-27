@@ -1,5 +1,5 @@
 import { createContext, useContext } from "react";
-import type { Tab } from "./types";
+import type { Tab, ConnectionInfo } from "./types";
 
 export interface WorkspaceContextValue {
   activeTab: Tab;
@@ -14,10 +14,11 @@ export interface WorkspaceContextValue {
   loadMoreQuery: () => Promise<void>;
   cancelActiveQuery: () => void;
   insertSql: (sql: string) => void;
-  /** Open a new tab pointed at connectionName with sql pre-filled, then run it. */
-  openSqlInNewTab: (connectionName: string, sql: string) => Promise<void>;
+  /** Open a new tab pointed at connectionName with sql pre-filled, optionally auto-running it. */
+  openSqlInNewTab: (connectionName: string, sql: string, autoRun?: boolean, label?: string) => Promise<void>;
   showConnectionDialog: boolean;
   openConnectionDialog: () => void;
+  editConnectionDialog: (conn: ConnectionInfo) => void;
   closeConnectionDialog: () => void;
   showCommandPalette: boolean;
   openCommandPalette: () => void;

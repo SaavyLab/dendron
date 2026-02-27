@@ -104,7 +104,29 @@ pub async fn save_connection(
     state: State<'_, AppState>,
 ) -> Result<(), String> {
     let mut config = state.config.lock().await;
-    let saved = build_saved_connection(&conn, password, ssh_passphrase)?;
+    let mut saved = build_saved_connection(&conn, password.clone(), ssh_passphrase.clone())?;
+
+    // When editing an existing connection and no new password/passphrase was provided,
+    // preserve the old encrypted values.
+    if let Some(old) = config.connections.iter().find(|c| c.name() == conn.name) {
+        if let (SavedConnection::Postgres { password: ref mut new_pw, .. },
+                SavedConnection::Postgres { password: ref old_pw, .. }) = (&mut saved, old) {
+            if password.as_ref().map_or(true, |p| p.is_empty()) {
+                *new_pw = old_pw.clone();
+            }
+        }
+        if let Some(old_ssh) = old.ssh() {
+            if let SavedConnection::Postgres { ssh: Some(ref mut new_ssh), .. } = &mut saved {
+                if ssh_passphrase.as_ref().map_or(true, |p| p.is_empty()) {
+                    if let (SshAuth::Key { passphrase: ref mut new_pp, .. },
+                            SshAuth::Key { passphrase: ref old_pp, .. }) = (&mut new_ssh.auth, &old_ssh.auth) {
+                        *new_pp = old_pp.clone();
+                    }
+                }
+            }
+        }
+    }
+
     config.add_connection(saved);
     config.save().map_err(|e| e.to_string())
 }

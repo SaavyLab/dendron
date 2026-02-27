@@ -51,6 +51,30 @@ export interface TableStructure {
   foreign_keys: ForeignKeyInfo[];
 }
 
+export type ConnectionEnvironment = "prod" | "staging" | "dev" | "local" | null;
+
+export const ENV_META: Record<Exclude<ConnectionEnvironment, null>, { label: string; color: string; bg: string; border: string }> = {
+  prod:    { label: "PROD",    color: "#f87171", bg: "rgba(248,113,113,0.10)", border: "rgba(248,113,113,0.25)" },
+  staging: { label: "STAGING", color: "#fbbf24", bg: "rgba(251,191,36,0.10)",  border: "rgba(251,191,36,0.25)" },
+  dev:     { label: "DEV",     color: "#4ade80", bg: "rgba(74,222,128,0.10)",  border: "rgba(74,222,128,0.25)" },
+  local:   { label: "LOCAL",   color: "#94a3b8", bg: "rgba(148,163,184,0.10)", border: "rgba(148,163,184,0.25)" },
+};
+
+/** Derive environment from the tags array stored in the backend. */
+export function envFromTags(tags: string[]): ConnectionEnvironment {
+  const lower = tags.map((t) => t.toLowerCase());
+  if (lower.includes("prod") || lower.includes("production")) return "prod";
+  if (lower.includes("staging")) return "staging";
+  if (lower.includes("dev")) return "dev";
+  if (lower.includes("local")) return "local";
+  return null;
+}
+
+/** Convert an environment selection into a tags array for the backend. */
+export function envToTags(env: ConnectionEnvironment): string[] {
+  return env ? [env] : [];
+}
+
 export interface ConnectionInfo {
   name: string;
   type: "sqlite" | "postgres";
@@ -103,6 +127,7 @@ export interface Tab {
   label: string;
   sql: string;
   connectionName: string | null;
+  connectionEnv: ConnectionEnvironment;
   result: QueryResult | null;
   error: string | null;
   isRunning: boolean;

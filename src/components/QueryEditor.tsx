@@ -14,6 +14,7 @@ import { sql, StandardSQL } from "@codemirror/lang-sql";
 import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
 import { tags } from "@lezer/highlight";
 import { api } from "@/lib/tauri";
+import { ENV_META } from "@/lib/types";
 import { splitStatements, statementAtOffset, type SqlStatement } from "@/lib/sql-utils";
 import { Button } from "@/components/ui/Button";
 import { Spinner } from "@/components/ui/Spinner";
@@ -37,6 +38,7 @@ interface QueryEditorProps {
   onCancel: () => void;
   isRunning: boolean;
   connectionName: string | null;
+  connectionEnv?: import("@/lib/types").ConnectionEnvironment;
   openConnections: string[];
   onConnectionChange: (name: string) => void;
 }
@@ -162,7 +164,7 @@ const dendronHighlight = syntaxHighlighting(
 
 // ── Component ────────────────────────────────────────────────
 export const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(
-  ({ tabId, defaultValue, onValueChange, onRun, onRunAll, onCancel, isRunning, connectionName, openConnections, onConnectionChange }, ref) => {
+  ({ tabId, defaultValue, onValueChange, onRun, onRunAll, onCancel, isRunning, connectionName, connectionEnv, openConnections, onConnectionChange }, ref) => {
     const containerRef = useRef<HTMLDivElement>(null);
     const viewRef = useRef<EditorView | null>(null);
     const sqlCompartment = useRef(new Compartment());
@@ -509,19 +511,25 @@ export const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(
               onClick={() => {
                 if (openConnections.length > 0) setShowConnectionDropdown((s) => !s);
               }}
-              style={{
-                fontFamily: "var(--font-mono)",
-                fontSize: "11px",
-                color: connectionName ? "var(--success)" : "var(--text-muted)",
-                background: connectionName ? "rgba(74,222,128,0.08)" : "transparent",
-                border: connectionName
-                  ? "1px solid rgba(74,222,128,0.2)"
-                  : "1px solid var(--border)",
-                borderRadius: "4px",
-                padding: "0 6px",
-                lineHeight: "20px",
-                cursor: openConnections.length > 0 ? "pointer" : "default",
-              }}
+              style={(() => {
+                const envMeta = connectionEnv ? ENV_META[connectionEnv] : null;
+                const dotColor = envMeta?.color ?? "var(--success)";
+                const bgColor = envMeta?.bg ?? "rgba(74,222,128,0.08)";
+                const borderColor = envMeta?.border ?? "rgba(74,222,128,0.2)";
+                return {
+                  fontFamily: "var(--font-mono)",
+                  fontSize: "11px",
+                  color: connectionName ? dotColor : "var(--text-muted)",
+                  background: connectionName ? bgColor : "transparent",
+                  border: connectionName
+                    ? `1px solid ${borderColor}`
+                    : "1px solid var(--border)",
+                  borderRadius: "4px",
+                  padding: "0 6px",
+                  lineHeight: "20px",
+                  cursor: openConnections.length > 0 ? "pointer" : "default",
+                };
+              })()}
             >
               {connectionName ? `● ${connectionName}` : "No connection"}
               {openConnections.length > 0 && (

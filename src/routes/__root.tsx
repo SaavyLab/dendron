@@ -3,7 +3,8 @@ import { createRootRoute, Outlet } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { Group as PanelGroup, Panel, Separator as PanelResizeHandle } from "react-resizable-panels";
 import { WorkspaceContext, type WorkspaceContextValue } from "@/lib/WorkspaceContext";
-import type { Tab, EditableInfo } from "@/lib/types";
+import type { Tab, EditableInfo, ConnectionInfo, ConnectionEnvironment } from "@/lib/types";
+import { envFromTags } from "@/lib/types";
 import { api } from "@/lib/tauri";
 import { TabBar } from "@/components/TabBar";
 import { ConnectionSidebar } from "@/components/ConnectionSidebar";
@@ -12,6 +13,7 @@ import { ResultsTable } from "@/components/ResultsTable";
 import { StatusBar } from "@/components/StatusBar";
 import { ConnectionDialog } from "@/components/ConnectionDialog";
 import { CommandPalette } from "@/components/CommandPalette";
+import { DangerConfirmDialog, type DangerConfirmRequest } from "@/components/DangerConfirmDialog";
 
 let nextId = 2;
 
@@ -22,19 +24,38 @@ function RootLayout() {
       label: "Query 1",
       sql: "",
       connectionName: null,
+      connectionEnv: null,
       result: null,
       error: null,
       isRunning: false,
     },
   ]);
   const [activeTabId, setActiveTabId] = useState(1);
-  const [showConnectionDialog, setShowConnectionDialog] = useState(false);
+  const [connectionDialogState, setConnectionDialogState] = useState<{ open: boolean; editing?: ConnectionInfo }>({ open: false });
   const [showCommandPalette, setShowCommandPalette] = useState(false);
   const [openConnections, setOpenConnections] = useState<string[]>([]);
+  const [dangerConfirm, setDangerConfirm] = useState<{
+    request: DangerConfirmRequest;
+    resolve: (confirmed: boolean) => void;
+  } | null>(null);
   const editorRef = useRef<QueryEditorHandle | null>(null);
   const queryClient = useQueryClient();
 
   const activeTab = tabs.find((t) => t.id === activeTabId) ?? tabs[0];
+
+  /** Look up the environment tag for a connection name from the cached connections list. */
+  const getConnectionEnv = useCallback((name: string): ConnectionEnvironment => {
+    const conns = queryClient.getQueryData<ConnectionInfo[]>(["connections"]);
+    const conn = conns?.find((c) => c.name === name);
+    return conn ? envFromTags(conn.tags) : null;
+  }, [queryClient]);
+
+  /** Show a danger confirmation dialog and return whether the user confirmed. */
+  const showDangerConfirm = useCallback((request: DangerConfirmRequest): Promise<boolean> => {
+    return new Promise((resolve) => {
+      setDangerConfirm({ request, resolve });
+    });
+  }, []);
 
   const updateTab = useCallback((id: number, updates: Partial<Tab>) => {
     setTabs((prev) => prev.map((t) => (t.id === id ? { ...t, ...updates } : t)));
@@ -49,6 +70,7 @@ function RootLayout() {
         label: `Query ${id}`,
         sql: "",
         connectionName: null,
+        connectionEnv: null,
         result: null,
         error: null,
         isRunning: false,
@@ -115,7 +137,12 @@ function RootLayout() {
       const safety = await api.queries.checkSafety(sqlToRun, tab.id);
       if (safety.requires_confirmation) {
         const msg = safety.warning_message ?? "This query may modify or delete data.";
-        if (!window.confirm(`${msg}\n\nContinue?`)) return;
+        const queryType = safety.query_type?.toLowerCase() ?? "";
+        const needsTyped = (queryType === "drop" || queryType === "truncate")
+          ? safety.connection_name
+          : undefined;
+        const confirmed = await showDangerConfirm({ message: msg, requireTypedConfirmation: needsTyped });
+        if (!confirmed) return;
       }
     } catch {
       // If safety check fails, proceed anyway
@@ -135,7 +162,7 @@ function RootLayout() {
       const msg = e instanceof Error ? e.message : String(e);
       updateTab(tab.id, { error: msg, isRunning: false });
     }
-  }, [tabs, activeTabId, updateTab]);
+  }, [tabs, activeTabId, updateTab, showDangerConfirm]);
 
   /**
    * Run all statements in the editor sequentially.  Shows the result of
@@ -162,7 +189,12 @@ function RootLayout() {
       const safety = await api.queries.checkSafety(tab.sql, tab.id);
       if (safety.requires_confirmation) {
         const msg = safety.warning_message ?? "This batch may modify or delete data.";
-        if (!window.confirm(`${msg}\n\nContinue?`)) return;
+        const queryType = safety.query_type?.toLowerCase() ?? "";
+        const needsTyped = (queryType === "drop" || queryType === "truncate")
+          ? safety.connection_name
+          : undefined;
+        const confirmed = await showDangerConfirm({ message: msg, requireTypedConfirmation: needsTyped });
+        if (!confirmed) return;
       }
     } catch {
       // If safety check fails, proceed anyway
@@ -193,7 +225,7 @@ function RootLayout() {
       const msg = e instanceof Error ? e.message : String(e);
       updateTab(tab.id, { error: msg, isRunning: false });
     }
-  }, [tabs, activeTabId, updateTab]);
+  }, [tabs, activeTabId, updateTab, showDangerConfirm]);
 
   const loadMoreQuery = useCallback(async () => {
     const tab = tabs.find((t) => t.id === activeTabId);
@@ -229,23 +261,40 @@ function RootLayout() {
     [activeTabId, updateTab]
   );
 
-  const openSqlInNewTab = useCallback(async (connectionName: string, sql: string) => {
+  const openSqlInNewTab = useCallback(async (connectionName: string, sql: string, autoRun?: boolean, label?: string) => {
     const id = nextId++;
+    const connectionEnv = getConnectionEnv(connectionName);
     setTabs((prev) => [
       ...prev,
       {
         id,
-        label: connectionName,
+        label: label ?? connectionName,
         sql,
         connectionName,
+        connectionEnv,
         result: null,
         error: null,
-        isRunning: false,
+        isRunning: !!autoRun,
       },
     ]);
     setActiveTabId(id);
     await api.connections.setTabConnection(id, connectionName);
-  }, []);
+
+    if (autoRun && sql.trim()) {
+      try {
+        const result = await api.queries.execute(id, sql);
+        await api.queries.addHistory(sql).catch(() => {});
+        let editableInfo: EditableInfo | null = null;
+        if (result.columns.length > 0) {
+          try { editableInfo = await api.queries.getEditableInfo(id, sql); } catch {}
+        }
+        updateTab(id, { result, isRunning: false, editableInfo });
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        updateTab(id, { error: msg, isRunning: false });
+      }
+    }
+  }, [updateTab]);
 
   const openConnection = useCallback(async (name: string) => {
     await api.connections.open(name);
@@ -283,6 +332,15 @@ function RootLayout() {
       } else if (mod && e.key === "w") {
         e.preventDefault();
         closeActiveTab();
+      } else if (e.ctrlKey && e.key === "Tab") {
+        e.preventDefault();
+        if (tabs.length <= 1) return;
+        const idx = tabs.findIndex((t) => t.id === activeTabId);
+        if (e.shiftKey) {
+          setActiveTabId(tabs[(idx - 1 + tabs.length) % tabs.length].id);
+        } else {
+          setActiveTabId(tabs[(idx + 1) % tabs.length].id);
+        }
       } else if (e.key === "Escape") {
         if (showCommandPalette) {
           setShowCommandPalette(false);
@@ -310,9 +368,10 @@ function RootLayout() {
     cancelActiveQuery,
     insertSql,
     openSqlInNewTab,
-    showConnectionDialog,
-    openConnectionDialog: () => setShowConnectionDialog(true),
-    closeConnectionDialog: () => setShowConnectionDialog(false),
+    showConnectionDialog: connectionDialogState.open,
+    openConnectionDialog: () => setConnectionDialogState({ open: true }),
+    editConnectionDialog: (conn: ConnectionInfo) => setConnectionDialogState({ open: true, editing: conn }),
+    closeConnectionDialog: () => setConnectionDialogState({ open: false }),
     showCommandPalette,
     openCommandPalette: () => setShowCommandPalette(true),
     closeCommandPalette: () => setShowCommandPalette(false),
@@ -358,10 +417,11 @@ function RootLayout() {
                     onCancel={cancelActiveQuery}
                     isRunning={activeTab.isRunning}
                     connectionName={activeTab.connectionName}
+                    connectionEnv={activeTab.connectionEnv}
                     openConnections={openConnections}
                     onConnectionChange={async (name) => {
                       await api.connections.setTabConnection(activeTab.id, name);
-                      updateTab(activeTab.id, { connectionName: name, label: name });
+                      updateTab(activeTab.id, { connectionName: name, connectionEnv: getConnectionEnv(name), label: name });
                     }}
                   />
                 </Panel>
@@ -388,10 +448,25 @@ function RootLayout() {
       </div>
 
       {/* Connection dialog */}
-      {showConnectionDialog && <ConnectionDialog />}
+      {connectionDialogState.open && <ConnectionDialog editing={connectionDialogState.editing} />}
 
       {/* Command palette */}
       {showCommandPalette && <CommandPalette />}
+
+      {/* Danger confirmation dialog */}
+      {dangerConfirm && (
+        <DangerConfirmDialog
+          request={dangerConfirm.request}
+          onConfirm={() => {
+            dangerConfirm.resolve(true);
+            setDangerConfirm(null);
+          }}
+          onCancel={() => {
+            dangerConfirm.resolve(false);
+            setDangerConfirm(null);
+          }}
+        />
+      )}
 
       {/* TanStack Router child outlet */}
       <Outlet />

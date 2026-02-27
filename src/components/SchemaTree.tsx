@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/tauri";
 import type { TableRow, ColumnDetail, IndexInfo, ForeignKeyInfo } from "@/lib/types";
@@ -9,9 +9,10 @@ import { useContextMenu } from "@/components/ui/ContextMenu";
 
 interface SchemaTreeProps {
   connectionName: string;
+  collapseKey?: number;
 }
 
-export function SchemaTree({ connectionName }: SchemaTreeProps) {
+export function SchemaTree({ connectionName, collapseKey }: SchemaTreeProps) {
   const schemasQuery = useQuery({
     queryKey: [connectionName, "schemas"],
     queryFn: () => api.schema.getNames(connectionName),
@@ -39,14 +40,18 @@ export function SchemaTree({ connectionName }: SchemaTreeProps) {
   return (
     <div className="flex flex-col overflow-y-auto flex-1">
       {schemas.map((schema) => (
-        <SchemaNode key={schema} schema={schema} connectionName={connectionName} />
+        <SchemaNode key={schema} schema={schema} connectionName={connectionName} collapseKey={collapseKey} />
       ))}
     </div>
   );
 }
 
-function SchemaNode({ schema, connectionName }: { schema: string; connectionName: string }) {
+function SchemaNode({ schema, connectionName, collapseKey }: { schema: string; connectionName: string; collapseKey?: number }) {
   const [expanded, setExpanded] = useState(false);
+
+  useEffect(() => {
+    if (collapseKey) setExpanded(false);
+  }, [collapseKey]);
 
   const tablesQuery = useQuery({
     queryKey: [connectionName, "tables", schema],
@@ -62,6 +67,7 @@ function SchemaNode({ schema, connectionName }: { schema: string; connectionName
         isExpanded={expanded}
         isLoading={tablesQuery.isFetching}
         onClick={() => setExpanded((e) => !e)}
+        onToggleExpand={() => setExpanded((e) => !e)}
         label={schema}
         labelStyle={{ color: "var(--text-secondary)", textTransform: "lowercase" }}
       />
@@ -72,6 +78,7 @@ function SchemaNode({ schema, connectionName }: { schema: string; connectionName
           schema={schema}
           table={table}
           connectionName={connectionName}
+          collapseKey={collapseKey}
         />
       ))}
     </div>
@@ -82,12 +89,18 @@ function TableNode({
   schema,
   table,
   connectionName,
+  collapseKey,
 }: {
   schema: string;
   table: TableRow;
   connectionName: string;
+  collapseKey?: number;
 }) {
   const [expanded, setExpanded] = useState(false);
+
+  useEffect(() => {
+    if (collapseKey) setExpanded(false);
+  }, [collapseKey]);
   const { insertSql, openSqlInNewTab } = useWorkspace();
   const { showContextMenu, contextMenuElement } = useContextMenu();
 
@@ -109,12 +122,13 @@ function TableNode({
         isExpanded={expanded}
         isLoading={structureQuery.isFetching}
         onClick={() => setExpanded((e) => !e)}
-        onDoubleClick={() => insertSql(selectSql)}
+        onToggleExpand={() => setExpanded((e) => !e)}
+        onDoubleClick={() => openSqlInNewTab(connectionName, selectSql, true, table.name)}
         onContextMenu={(e) => {
           showContextMenu(e, [
             { label: "Copy table name", onClick: () => navigator.clipboard.writeText(table.name) },
             { label: "SELECT * in editor", onClick: () => insertSql(selectSql) },
-            { label: "Open SELECT in new tab", onClick: () => openSqlInNewTab(connectionName, selectSql) },
+            { label: "Open SELECT in new tab", onClick: () => openSqlInNewTab(connectionName, selectSql, true, table.name) },
           ]);
         }}
         label={table.name}
@@ -123,7 +137,7 @@ function TableNode({
           <button
             onClick={(e) => {
               e.stopPropagation();
-              openSqlInNewTab(connectionName, selectSql);
+              openSqlInNewTab(connectionName, selectSql, true, table.name);
             }}
             title={`Open SELECT * in new tab`}
             className="opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
@@ -373,6 +387,7 @@ interface TreeRowProps {
   isExpanded?: boolean;
   isLoading?: boolean;
   onClick?: () => void;
+  onToggleExpand?: () => void;
   onDoubleClick?: () => void;
   onContextMenu?: (e: React.MouseEvent) => void;
   label: string;
@@ -386,6 +401,7 @@ function TreeRow({
   isExpanded,
   isLoading,
   onClick,
+  onToggleExpand,
   onDoubleClick,
   onContextMenu,
   label,
@@ -403,11 +419,15 @@ function TreeRow({
           "hover:bg-white/[0.04] transition-colors"
         )}
         style={{ paddingLeft: `${depth * 16 + 4}px` }}
-        onClick={onClick}
+        onClick={(e) => {
+          // Skip the expand toggle on the second click of a double-click
+          if (onDoubleClick && e.detail === 2) return;
+          onClick?.();
+        }}
         onDoubleClick={onDoubleClick}
         onContextMenu={onContextMenu}
       >
-        {/* Chevron */}
+        {/* Chevron — also clickable for expand/collapse */}
         {isExpandable && (
           <span
             className="shrink-0 transition-transform"
@@ -415,9 +435,15 @@ function TreeRow({
               fontSize: "9px",
               color: "var(--text-muted)",
               transform: isExpanded ? "rotate(90deg)" : "rotate(0deg)",
-              width: "10px",
+              width: "14px",
+              height: "100%",
               display: "inline-flex",
+              alignItems: "center",
               justifyContent: "center",
+            }}
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggleExpand?.();
             }}
           >
             ›

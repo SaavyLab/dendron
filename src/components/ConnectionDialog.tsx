@@ -2,7 +2,8 @@ import { useState, useEffect, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { open } from "@tauri-apps/plugin-dialog";
 import { api } from "@/lib/tauri";
-import type { ConnectionInfo } from "@/lib/types";
+import type { ConnectionInfo, ConnectionEnvironment } from "@/lib/types";
+import { ENV_META, envFromTags, envToTags } from "@/lib/types";
 import { useWorkspace } from "@/lib/WorkspaceContext";
 import { Button } from "@/components/ui/Button";
 import { Spinner } from "@/components/ui/Spinner";
@@ -13,6 +14,7 @@ type SshAuthType = "agent" | "key";
 
 interface FormState {
   name: string;
+  environment: ConnectionEnvironment;
   host: string;
   port: string;
   database: string;
@@ -31,6 +33,7 @@ interface FormState {
 
 const DEFAULTS: FormState = {
   name: "",
+  environment: null,
   host: "localhost",
   port: "5432",
   database: "",
@@ -46,11 +49,31 @@ const DEFAULTS: FormState = {
   sshPassphrase: "",
 };
 
-export function ConnectionDialog() {
+export function ConnectionDialog({ editing }: { editing?: ConnectionInfo }) {
   const { closeConnectionDialog } = useWorkspace();
   const queryClient = useQueryClient();
-  const [dbType, setDbType] = useState<DbType>("postgres");
-  const [form, setForm] = useState<FormState>(DEFAULTS);
+  const isEditing = !!editing;
+  const [dbType, setDbType] = useState<DbType>(editing?.type ?? "postgres");
+  const [form, setForm] = useState<FormState>(() => {
+    if (!editing) return DEFAULTS;
+    return {
+      name: editing.name,
+      environment: envFromTags(editing.tags),
+      host: editing.host ?? "localhost",
+      port: String(editing.port ?? 5432),
+      database: editing.database ?? "",
+      username: editing.username ?? "postgres",
+      password: "",
+      path: editing.path ?? "",
+      useSsh: editing.ssh_enabled ?? false,
+      sshHost: editing.ssh_host ?? "",
+      sshPort: String(editing.ssh_port ?? 22),
+      sshUsername: editing.ssh_username ?? "",
+      sshAuthType: editing.ssh_key_path ? "key" : "agent",
+      sshKeyPath: editing.ssh_key_path ?? "",
+      sshPassphrase: "",
+    };
+  });
   const [testing, setTesting] = useState(false);
   const [saving, setSaving] = useState(false);
   const [testResult, setTestResult] = useState<{ ok: boolean; msg: string } | null>(null);
@@ -66,7 +89,7 @@ export function ConnectionDialog() {
     return () => window.removeEventListener("keydown", onKey);
   }, [closeConnectionDialog]);
 
-  function update(field: keyof FormState, value: string | boolean) {
+  function update(field: keyof FormState, value: string | boolean | null) {
     setForm((f) => ({ ...f, [field]: value }));
     setTestResult(null);
   }
@@ -82,11 +105,12 @@ export function ConnectionDialog() {
   }
 
   function buildConn(): Omit<ConnectionInfo, "is_dangerous"> {
+    const tags = envToTags(form.environment);
     if (dbType === "postgres") {
       return {
         name: form.name.trim(),
         type: "postgres",
-        tags: [],
+        tags,
         host: form.host,
         port: parseInt(form.port, 10) || 5432,
         database: form.database,
@@ -101,7 +125,7 @@ export function ConnectionDialog() {
     return {
       name: form.name.trim(),
       type: "sqlite",
-      tags: [],
+      tags,
       path: form.path,
     };
   }
@@ -185,7 +209,7 @@ export function ConnectionDialog() {
           style={{ height: "44px", borderColor: "var(--border)" }}
         >
           <span style={{ fontSize: "13px", fontWeight: 500, color: "var(--text-primary)" }}>
-            New Connection
+            {isEditing ? "Edit Connection" : "New Connection"}
           </span>
           <button
             onClick={closeConnectionDialog}
@@ -206,7 +230,8 @@ export function ConnectionDialog() {
             {(["postgres", "sqlite"] as DbType[]).map((t) => (
               <button
                 key={t}
-                onClick={() => setDbType(t)}
+                onClick={() => !isEditing && setDbType(t)}
+                disabled={isEditing}
                 className={cn(
                   "flex-1 py-1.5 text-xs font-medium transition-colors",
                   dbType === t
@@ -233,8 +258,57 @@ export function ConnectionDialog() {
               onChange={(e) => update("name", e.target.value)}
               placeholder="my-database"
               onKeyDown={(e) => e.key === "Enter" && handleSave()}
+              readOnly={isEditing}
+              style={isEditing ? { opacity: 0.6, cursor: "default" } : undefined}
             />
           </Field>
+
+          {/* Environment */}
+          <div className="flex flex-col gap-1">
+            <label
+              style={{
+                fontSize: "11px",
+                fontWeight: 500,
+                color: "var(--text-muted)",
+                textTransform: "uppercase",
+                letterSpacing: "0.06em",
+              }}
+            >
+              Environment
+            </label>
+            <div className="flex gap-1.5">
+              {([null, "prod", "staging", "dev", "local"] as ConnectionEnvironment[]).map((env) => {
+                const isSelected = form.environment === env;
+                const meta = env ? ENV_META[env] : null;
+                return (
+                  <button
+                    key={env ?? "none"}
+                    onClick={() => update("environment", env)}
+                    className="transition-colors"
+                    style={{
+                      fontFamily: "var(--font-mono)",
+                      fontSize: "10px",
+                      padding: "2px 8px",
+                      lineHeight: "18px",
+                      borderRadius: "3px",
+                      letterSpacing: "0.04em",
+                      border: isSelected
+                        ? `1px solid ${meta?.border ?? "var(--border-strong)"}`
+                        : "1px solid var(--border)",
+                      color: isSelected
+                        ? (meta?.color ?? "var(--text-primary)")
+                        : "var(--text-muted)",
+                      background: isSelected
+                        ? (meta?.bg ?? "rgba(255,255,255,0.06)")
+                        : "transparent",
+                    }}
+                  >
+                    {meta?.label ?? "NONE"}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
 
           {dbType === "postgres" ? (
             <>
@@ -280,7 +354,7 @@ export function ConnectionDialog() {
                   type="password"
                   value={form.password}
                   onChange={(e) => update("password", e.target.value)}
-                  placeholder="••••••••"
+                  placeholder={isEditing ? "(unchanged)" : "••••••••"}
                   autoComplete="new-password"
                 />
               </Field>
