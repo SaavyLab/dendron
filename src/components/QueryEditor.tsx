@@ -37,6 +37,8 @@ interface QueryEditorProps {
   onCancel: () => void;
   isRunning: boolean;
   connectionName: string | null;
+  openConnections: string[];
+  onConnectionChange: (name: string) => void;
 }
 
 // ── Active-statement highlighting ────────────────────────────
@@ -160,11 +162,12 @@ const dendronHighlight = syntaxHighlighting(
 
 // ── Component ────────────────────────────────────────────────
 export const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(
-  ({ tabId, defaultValue, onValueChange, onRun, onRunAll, onCancel, isRunning, connectionName }, ref) => {
+  ({ tabId, defaultValue, onValueChange, onRun, onRunAll, onCancel, isRunning, connectionName, openConnections, onConnectionChange }, ref) => {
     const containerRef = useRef<HTMLDivElement>(null);
     const viewRef = useRef<EditorView | null>(null);
     const sqlCompartment = useRef(new Compartment());
     const [showHistory, setShowHistory] = useState(false);
+    const [showConnectionDropdown, setShowConnectionDropdown] = useState(false);
 
     const historyQuery = useQuery({
       queryKey: ["query-history"],
@@ -471,33 +474,72 @@ export const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(
 
           <div className="flex-1" />
 
-          {/* Connection badge */}
-          {connectionName ? (
-            <span
+          {/* Connection dropdown */}
+          <div className="relative">
+            <button
+              onClick={() => {
+                if (openConnections.length > 0) setShowConnectionDropdown((s) => !s);
+              }}
               style={{
                 fontFamily: "var(--font-mono)",
                 fontSize: "11px",
-                color: "var(--success)",
-                background: "rgba(74,222,128,0.08)",
-                border: "1px solid rgba(74,222,128,0.2)",
+                color: connectionName ? "var(--success)" : "var(--text-muted)",
+                background: connectionName ? "rgba(74,222,128,0.08)" : "transparent",
+                border: connectionName
+                  ? "1px solid rgba(74,222,128,0.2)"
+                  : "1px solid var(--border)",
                 borderRadius: "4px",
                 padding: "0 6px",
                 lineHeight: "20px",
+                cursor: openConnections.length > 0 ? "pointer" : "default",
               }}
             >
-              ● {connectionName}
-            </span>
-          ) : (
-            <span
-              style={{
-                fontFamily: "var(--font-mono)",
-                fontSize: "11px",
-                color: "var(--text-muted)",
-              }}
-            >
-              No connection
-            </span>
-          )}
+              {connectionName ? `● ${connectionName}` : "No connection"}
+              {openConnections.length > 0 && (
+                <span style={{ marginLeft: "4px", fontSize: "9px" }}>▾</span>
+              )}
+            </button>
+
+            {showConnectionDropdown && (
+              <div
+                className="absolute top-full right-0 mt-1 z-50 overflow-hidden"
+                style={{
+                  minWidth: "180px",
+                  maxHeight: "200px",
+                  background: "var(--bg-elevated)",
+                  border: "1px solid var(--border-strong)",
+                  borderRadius: "6px",
+                  overflowY: "auto",
+                }}
+              >
+                {openConnections.map((name) => (
+                  <button
+                    key={name}
+                    onClick={() => {
+                      onConnectionChange(name);
+                      setShowConnectionDropdown(false);
+                    }}
+                    className="w-full text-left px-3 py-1.5 transition-colors"
+                    style={{
+                      fontFamily: "var(--font-mono)",
+                      fontSize: "11px",
+                      color: name === connectionName ? "var(--accent)" : "var(--text-secondary)",
+                      background: name === connectionName ? "rgba(96,165,250,0.08)" : "transparent",
+                    }}
+                    onMouseEnter={(e) => {
+                      (e.currentTarget as HTMLButtonElement).style.background = "rgba(255,255,255,0.04)";
+                    }}
+                    onMouseLeave={(e) => {
+                      (e.currentTarget as HTMLButtonElement).style.background =
+                        name === connectionName ? "rgba(96,165,250,0.08)" : "transparent";
+                    }}
+                  >
+                    {name === connectionName ? `● ${name}` : name}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Editor */}
@@ -505,14 +547,14 @@ export const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(
           ref={containerRef}
           className="flex-1 overflow-hidden selectable"
           style={{ minHeight: 0 }}
-          onClick={() => setShowHistory(false)}
+          onClick={() => { setShowHistory(false); setShowConnectionDropdown(false); }}
         />
 
-        {/* Click-outside for history */}
-        {showHistory && (
+        {/* Click-outside for dropdowns */}
+        {(showHistory || showConnectionDropdown) && (
           <div
             className="fixed inset-0 z-40"
-            onClick={() => setShowHistory(false)}
+            onClick={() => { setShowHistory(false); setShowConnectionDropdown(false); }}
           />
         )}
       </div>

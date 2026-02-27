@@ -14,6 +14,7 @@ import { Button } from "@/components/ui/Button";
 import { formatMs } from "@/lib/utils";
 import { save } from "@tauri-apps/plugin-dialog";
 import { api } from "@/lib/tauri";
+import { useContextMenu } from "@/components/ui/ContextMenu";
 
 interface ResultsTableProps {
   result: QueryResult | null;
@@ -214,6 +215,7 @@ function DataTable({ result, onLoadMore }: { result: QueryResult; onLoadMore?: (
   const parentRef = useRef<HTMLDivElement>(null);
   const [selectedCell, setSelectedCell] = useState<SelectedCell | null>(null);
   const [selectedRow, setSelectedRow] = useState<number | null>(null);
+  const { showContextMenu, contextMenuElement } = useContextMenu();
 
   const columns = useMemo<ColumnDef<string[]>[]>(
     () => [
@@ -336,6 +338,12 @@ function DataTable({ result, onLoadMore }: { result: QueryResult; onLoadMore?: (
                     ? { justifyContent: "center", color: "var(--text-muted)", background: "rgba(0,0,0,0.12)" }
                     : { paddingLeft: "8px", paddingRight: "8px", color: "var(--text-secondary)", textTransform: "uppercase" as const, letterSpacing: "0.04em" }),
                 }}
+                onContextMenu={isGutter ? undefined : (e) => {
+                  const colName = String(header.column.columnDef.header);
+                  showContextMenu(e, [
+                    { label: "Copy column name", onClick: () => navigator.clipboard.writeText(colName) },
+                  ]);
+                }}
               >
                 {isGutter ? (
                   <span>#</span>
@@ -418,6 +426,28 @@ function DataTable({ result, onLoadMore }: { result: QueryResult; onLoadMore?: (
                           setSelectedRow(virtualRow.index);
                           setSelectedCell(null);
                         }}
+                        onContextMenu={(e) => {
+                          const rowData = result.rows[virtualRow.index];
+                          showContextMenu(e, [
+                            { label: "Copy row", onClick: () => navigator.clipboard.writeText(rowData.join("\t")) },
+                            {
+                              label: "Copy as JSON",
+                              onClick: () => {
+                                const obj: Record<string, string> = {};
+                                result.columns.forEach((c, ci) => { obj[c] = rowData[ci]; });
+                                navigator.clipboard.writeText(JSON.stringify(obj, null, 2));
+                              },
+                            },
+                            {
+                              label: "Copy as INSERT",
+                              separator: true,
+                              onClick: async () => {
+                                const insert = await api.export.rowAsInsert("table", rowData, result.columns);
+                                navigator.clipboard.writeText(insert);
+                              },
+                            },
+                          ]);
+                        }}
                       >
                         {virtualRow.index + 1}
                       </div>
@@ -458,6 +488,29 @@ function DataTable({ result, onLoadMore }: { result: QueryResult; onLoadMore?: (
                         });
                         setSelectedRow(null);
                       }}
+                      onContextMenu={(e) => {
+                        const rowData = result.rows[virtualRow.index];
+                        const cellValue = rowData[colIdx] ?? "NULL";
+                        showContextMenu(e, [
+                          { label: "Copy cell", onClick: () => navigator.clipboard.writeText(cellValue === "NULL" ? "" : cellValue) },
+                          {
+                            label: "Copy row as JSON",
+                            onClick: () => {
+                              const obj: Record<string, string> = {};
+                              result.columns.forEach((c, ci) => { obj[c] = rowData[ci]; });
+                              navigator.clipboard.writeText(JSON.stringify(obj, null, 2));
+                            },
+                          },
+                          {
+                            label: "Copy row as INSERT",
+                            separator: true,
+                            onClick: async () => {
+                              const insert = await api.export.rowAsInsert("table", rowData, result.columns);
+                              navigator.clipboard.writeText(insert);
+                            },
+                          },
+                        ]);
+                      }}
                     >
                       {flexRender(cell.column.columnDef.cell, cell.getContext())}
                     </div>
@@ -472,6 +525,8 @@ function DataTable({ result, onLoadMore }: { result: QueryResult; onLoadMore?: (
       {selectedCell && (
         <CellDetailPanel cell={selectedCell} onClose={() => setSelectedCell(null)} />
       )}
+
+      {contextMenuElement}
     </div>
   );
 }

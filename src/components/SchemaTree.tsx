@@ -5,6 +5,7 @@ import type { TableRow, ColumnDetail, IndexInfo, ForeignKeyInfo } from "@/lib/ty
 import { useWorkspace } from "@/lib/WorkspaceContext";
 import { cn } from "@/lib/utils";
 import { Spinner } from "@/components/ui/Spinner";
+import { useContextMenu } from "@/components/ui/ContextMenu";
 
 interface SchemaTreeProps {
   connectionName: string;
@@ -88,6 +89,7 @@ function TableNode({
 }) {
   const [expanded, setExpanded] = useState(false);
   const { insertSql, openSqlInNewTab } = useWorkspace();
+  const { showContextMenu, contextMenuElement } = useContextMenu();
 
   const structureQuery = useQuery({
     queryKey: [connectionName, "structure", schema, table.name],
@@ -108,6 +110,13 @@ function TableNode({
         isLoading={structureQuery.isFetching}
         onClick={() => setExpanded((e) => !e)}
         onDoubleClick={() => insertSql(selectSql)}
+        onContextMenu={(e) => {
+          showContextMenu(e, [
+            { label: "Copy table name", onClick: () => navigator.clipboard.writeText(table.name) },
+            { label: "SELECT * in editor", onClick: () => insertSql(selectSql) },
+            { label: "Open SELECT in new tab", onClick: () => openSqlInNewTab(connectionName, selectSql) },
+          ]);
+        }}
         label={table.name}
         labelStyle={{ color: table.is_view ? "var(--text-muted)" : "var(--text-primary)" }}
         action={
@@ -139,7 +148,15 @@ function TableNode({
             count={structure.columns.length}
           >
             {structure.columns.map((col) => (
-              <ColumnRow key={col.name} col={col} />
+              <ColumnRow
+                key={col.name}
+                col={col}
+                onContextMenu={(e) => {
+                  showContextMenu(e, [
+                    { label: "Copy column name", onClick: () => navigator.clipboard.writeText(col.name) },
+                  ]);
+                }}
+              />
             ))}
           </CategoryGroup>
 
@@ -170,6 +187,8 @@ function TableNode({
           )}
         </>
       )}
+
+      {contextMenuElement}
     </div>
   );
 }
@@ -237,11 +256,12 @@ function CategoryGroup({
   );
 }
 
-function ColumnRow({ col }: { col: ColumnDetail }) {
+function ColumnRow({ col, onContextMenu }: { col: ColumnDetail; onContextMenu?: (e: React.MouseEvent) => void }) {
   return (
     <div
       className="flex items-center px-2 group"
       style={{ height: "22px" }}
+      onContextMenu={onContextMenu}
     >
       <div
         className="flex items-center gap-1.5 w-full"
@@ -354,6 +374,7 @@ interface TreeRowProps {
   isLoading?: boolean;
   onClick?: () => void;
   onDoubleClick?: () => void;
+  onContextMenu?: (e: React.MouseEvent) => void;
   label: string;
   labelStyle?: React.CSSProperties;
   action?: React.ReactNode;
@@ -366,6 +387,7 @@ function TreeRow({
   isLoading,
   onClick,
   onDoubleClick,
+  onContextMenu,
   label,
   labelStyle,
   action,
@@ -383,6 +405,7 @@ function TreeRow({
         style={{ paddingLeft: `${depth * 16 + 4}px` }}
         onClick={onClick}
         onDoubleClick={onDoubleClick}
+        onContextMenu={onContextMenu}
       >
         {/* Chevron */}
         {isExpandable && (

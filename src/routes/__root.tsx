@@ -348,6 +348,11 @@ function RootLayout() {
                     onCancel={cancelActiveQuery}
                     isRunning={activeTab.isRunning}
                     connectionName={activeTab.connectionName}
+                    openConnections={openConnections}
+                    onConnectionChange={async (name) => {
+                      await api.connections.setTabConnection(activeTab.id, name);
+                      updateTab(activeTab.id, { connectionName: name, label: name });
+                    }}
                   />
                 </Panel>
 

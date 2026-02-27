@@ -6,6 +6,7 @@ import { useWorkspace } from "@/lib/WorkspaceContext";
 import { SchemaTree } from "@/components/SchemaTree";
 import { Spinner } from "@/components/ui/Spinner";
 import { cn } from "@/lib/utils";
+import { useContextMenu } from "@/components/ui/ContextMenu";
 
 export function ConnectionSidebar() {
   const {
@@ -15,8 +16,10 @@ export function ConnectionSidebar() {
     openConnections,
     openConnection,
     closeConnection,
+    openSqlInNewTab,
   } = useWorkspace();
   const queryClient = useQueryClient();
+  const { showContextMenu, contextMenuElement } = useContextMenu();
   const [connectingName, setConnectingName] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   // Track which open connections have their schema tree expanded
@@ -47,7 +50,6 @@ export function ConnectionSidebar() {
       setErrorMsg(null);
       try {
         await openConnection(conn.name);
-        // Auto-expand schema tree when first opened
         setExpandedConnections((prev) => new Set([...prev, conn.name]));
       } catch (e) {
         setErrorMsg(e instanceof Error ? e.message : String(e));
@@ -59,13 +61,16 @@ export function ConnectionSidebar() {
       toggleExpanded(conn.name);
     }
 
-    // Always point active tab at this connection
-    await api.connections.setTabConnection(activeTab.id, conn.name);
-    updateTab(activeTab.id, { connectionName: conn.name, label: conn.name });
+    // If the active tab already has a connection, open a new tab instead
+    if (activeTab.connectionName !== null) {
+      await openSqlInNewTab(conn.name, "");
+    } else {
+      await api.connections.setTabConnection(activeTab.id, conn.name);
+      updateTab(activeTab.id, { connectionName: conn.name, label: conn.name });
+    }
   }
 
-  async function handleClose(name: string, e: React.MouseEvent) {
-    e.stopPropagation();
+  async function doClose(name: string) {
     try {
       await closeConnection(name);
       setExpandedConnections((prev) => {
@@ -73,7 +78,6 @@ export function ConnectionSidebar() {
         next.delete(name);
         return next;
       });
-      // If active tab was on this connection, detach it
       if (activeTab.connectionName === name) {
         await api.connections.setTabConnection(activeTab.id, null);
         updateTab(activeTab.id, { connectionName: null, label: `Query ${activeTab.id}` });
@@ -83,8 +87,7 @@ export function ConnectionSidebar() {
     }
   }
 
-  async function handleDelete(name: string, e: React.MouseEvent) {
-    e.stopPropagation();
+  async function doDelete(name: string) {
     if (!confirm(`Delete connection "${name}"?`)) return;
     try {
       await api.connections.delete(name);
@@ -184,6 +187,15 @@ export function ConnectionSidebar() {
                 )}
                 style={{ height: "32px", borderColor: "var(--border-subtle)" }}
                 onClick={() => handleConnectionClick(conn)}
+                onContextMenu={(e) => {
+                  const items = [];
+                  if (isOpen) {
+                    items.push({ label: "Open in new tab", onClick: () => openSqlInNewTab(conn.name, "") });
+                    items.push({ label: "Close connection", separator: true, onClick: () => doClose(conn.name) });
+                  }
+                  items.push({ label: "Delete connection", separator: !isOpen, onClick: () => doDelete(conn.name) });
+                  showContextMenu(e, items);
+                }}
               >
                 {/* Expand chevron for open connections */}
                 <span
@@ -238,7 +250,7 @@ export function ConnectionSidebar() {
                   <Spinner size="xs" className="shrink-0" />
                 ) : isOpen ? (
                   <button
-                    onClick={(e) => handleClose(conn.name, e)}
+                    onClick={(e) => { e.stopPropagation(); doClose(conn.name); }}
                     title="Close connection"
                     className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
                     style={{ fontSize: "13px", color: "var(--text-muted)", padding: "2px 4px", lineHeight: 1 }}
@@ -249,7 +261,7 @@ export function ConnectionSidebar() {
                   </button>
                 ) : (
                   <button
-                    onClick={(e) => handleDelete(conn.name, e)}
+                    onClick={(e) => { e.stopPropagation(); doDelete(conn.name); }}
                     title="Delete connection"
                     className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
                     style={{ fontSize: "13px", color: "var(--text-muted)", padding: "2px 4px", lineHeight: 1 }}
@@ -269,6 +281,8 @@ export function ConnectionSidebar() {
           );
         })}
       </div>
+
+      {contextMenuElement}
     </div>
   );
 }
