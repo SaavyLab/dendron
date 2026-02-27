@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
+import { useHotkey } from "@tanstack/react-hotkeys";
 import { open } from "@tauri-apps/plugin-dialog";
 import { api } from "@/lib/tauri";
 import type { ConnectionInfo, ConnectionEnvironment } from "@/lib/types";
@@ -81,13 +82,9 @@ export function ConnectionDialog({ editing }: { editing?: ConnectionInfo }) {
 
   useEffect(() => {
     nameRef.current?.focus();
+  }, []);
 
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") closeConnectionDialog();
-    }
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [closeConnectionDialog]);
+  useHotkey("Escape", () => closeConnectionDialog());
 
   function update(field: keyof FormState, value: string | boolean | null) {
     setForm((f) => ({ ...f, [field]: value }));

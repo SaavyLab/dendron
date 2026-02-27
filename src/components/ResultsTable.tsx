@@ -1,4 +1,5 @@
 import { useRef, useMemo, useState, useEffect, type ReactNode } from "react";
+import { useHotkey } from "@tanstack/react-hotkeys";
 import {
   useReactTable,
   getCoreRowModel,
@@ -639,22 +640,14 @@ function DataTable({
     }
   }, [selectedCell, selectedRow, rowVirtualizer]);
 
-  useEffect(() => {
-    function onKey(e: KeyboardEvent) {
-      if (!(e.ctrlKey || e.metaKey) || e.key !== "c") return;
-      if (window.getSelection()?.toString()) return;
-      if (selectedCell) {
-        e.preventDefault();
-        navigator.clipboard.writeText(selectedCell.value === "NULL" ? "" : selectedCell.value);
-      } else if (selectedRow !== null) {
-        e.preventDefault();
-        // Copy row as tab-separated values (pastes cleanly into spreadsheets)
-        navigator.clipboard.writeText(result.rows[selectedRow].join("\t"));
-      }
+  useHotkey("Mod+C", () => {
+    if (window.getSelection()?.toString()) return;
+    if (selectedCell) {
+      navigator.clipboard.writeText(selectedCell.value === "NULL" ? "" : selectedCell.value);
+    } else if (selectedRow !== null) {
+      navigator.clipboard.writeText(result.rows[selectedRow].join("\t"));
     }
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [selectedCell, selectedRow, result.rows]);
+  }, { enabled: selectedCell !== null || selectedRow !== null });
 
   return (
     <div className="flex flex-col h-full overflow-hidden" style={{ background: "var(--bg-surface)" }}>
@@ -1060,19 +1053,13 @@ function CellDetailPanel({
     setDraft("");
   }, [cell.rowIdx, cell.colIdx]);
 
-  useEffect(() => {
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") {
-        if (editing) {
-          setEditing(false);
-        } else {
-          onClose();
-        }
-      }
+  useHotkey("Escape", () => {
+    if (editing) {
+      setEditing(false);
+    } else {
+      onClose();
     }
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose, editing]);
+  });
 
   function startResize(e: { preventDefault(): void; clientY: number }) {
     e.preventDefault();

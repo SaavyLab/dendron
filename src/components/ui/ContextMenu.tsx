@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useHotkey } from "@tanstack/react-hotkeys";
 import { createPortal } from "react-dom";
 
 export interface ContextMenuItem {
@@ -30,13 +31,7 @@ function ContextMenu({ items, position, onClose }: ContextMenuProps) {
   }, [position]);
 
   // Escape to close
-  useEffect(() => {
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") onClose();
-    }
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  useHotkey("Escape", () => onClose());
 
   // Scroll to close
   useEffect(() => {

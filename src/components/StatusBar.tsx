@@ -18,6 +18,7 @@ export function StatusBar() {
       <Hint keys="⌃T" label="New tab" />
       <Hint keys="⌃W" label="Close" />
       <Hint keys="Esc" label="Cancel" />
+      <Hint keys="⌃K" label="Shortcuts" />
 
       <div className="flex-1" />
 

@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { useHotkey } from "@tanstack/react-hotkeys";
 import { Button } from "@/components/ui/Button";
 
 export interface DangerConfirmRequest {
@@ -20,17 +21,13 @@ export function DangerConfirmDialog({ request, onConfirm, onCancel }: DangerConf
   const needsTyping = !!request.requireTypedConfirmation;
   const typedCorrectly = !needsTyping || typed === request.requireTypedConfirmation;
 
+  useHotkey("Escape", () => onCancel());
+
   useEffect(() => {
     if (needsTyping) {
       inputRef.current?.focus();
     }
-
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") onCancel();
-    }
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onCancel, needsTyping]);
+  }, [needsTyping]);
 
   return (
     <>

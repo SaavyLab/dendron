@@ -1,6 +1,7 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import { createRootRoute, Outlet } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
+import { HotkeysProvider, useHotkey } from "@tanstack/react-hotkeys";
 import { Group as PanelGroup, Panel, Separator as PanelResizeHandle, useDefaultLayout } from "react-resizable-panels";
 import { WorkspaceContext, type WorkspaceContextValue } from "@/lib/WorkspaceContext";
 import type { Tab, EditableInfo, ConnectionInfo, ConnectionEnvironment, StatementResult } from "@/lib/types";
@@ -15,6 +16,7 @@ import { StatusBar } from "@/components/StatusBar";
 import { ConnectionDialog } from "@/components/ConnectionDialog";
 import { CommandPalette } from "@/components/CommandPalette";
 import { DangerConfirmDialog, type DangerConfirmRequest } from "@/components/DangerConfirmDialog";
+import { ShortcutsDialog } from "@/components/ShortcutsDialog";
 
 const TABS_STORAGE_KEY = "dendron-tabs";
 const DEFAULT_TAB: Tab = {
@@ -68,6 +70,7 @@ function RootLayout() {
   const [activeTabId, setActiveTabId] = useState(_restored.activeTabId);
   const [connectionDialogState, setConnectionDialogState] = useState<{ open: boolean; editing?: ConnectionInfo }>({ open: false });
   const [showCommandPalette, setShowCommandPalette] = useState(false);
+  const [showShortcuts, setShowShortcuts] = useState(false);
   const [openConnections, setOpenConnections] = useState<string[]>([]);
   const [dangerConfirm, setDangerConfirm] = useState<{
     request: DangerConfirmRequest;
@@ -444,26 +447,45 @@ function RootLayout() {
     return () => clearTimeout(timer);
   }, [tabs, activeTabId]);
 
-  // Global keyboard shortcuts
+  // ── Global keyboard shortcuts (TanStack Hotkeys) ──────────────────────
+
+  useHotkey("Mod+P", () => setShowCommandPalette((v) => !v));
+  useHotkey("Mod+K", () => setShowShortcuts((v) => !v));
+  useHotkey("Mod+Shift+Enter", () => runAllQueries());
+  useHotkey("Mod+Enter", () => runActiveQuery());
+  useHotkey("Mod+T", () => addTab());
+  useHotkey("Mod+W", () => closeActiveTab());
+
+  // Cycle result sub-tabs
+  useHotkey("Mod+[", () => {
+    const tab = tabs.find((t) => t.id === activeTabId);
+    if (tab?.results && tab.results.length > 1) {
+      updateTab(tab.id, { activeResultIndex: (tab.activeResultIndex - 1 + tab.results.length) % tab.results.length });
+    }
+  });
+  useHotkey("Mod+]", () => {
+    const tab = tabs.find((t) => t.id === activeTabId);
+    if (tab?.results && tab.results.length > 1) {
+      updateTab(tab.id, { activeResultIndex: (tab.activeResultIndex + 1) % tab.results.length });
+    }
+  });
+
+  // Escape: close palette or cancel running query
+  // Only active when no modal dialog is layered on top
+  useHotkey("Escape", () => {
+    if (showCommandPalette) {
+      setShowCommandPalette(false);
+    } else {
+      const tab = tabs.find((t) => t.id === activeTabId);
+      if (tab?.isRunning) cancelActiveQuery();
+    }
+  }, { enabled: !connectionDialogState.open && !dangerConfirm && !showShortcuts });
+
+  // Ctrl+Tab / Ctrl+Shift+Tab — browser intercepts these in many contexts,
+  // and the library can't reliably capture them. Keep as manual listener.
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
-      const mod = e.ctrlKey || e.metaKey;
-      if (mod && e.key === "p") {
-        e.preventDefault();
-        setShowCommandPalette((v) => !v);
-      } else if (mod && e.shiftKey && e.key === "Enter") {
-        e.preventDefault();
-        runAllQueries();
-      } else if (mod && e.key === "Enter") {
-        e.preventDefault();
-        runActiveQuery();
-      } else if (mod && e.key === "t") {
-        e.preventDefault();
-        addTab();
-      } else if (mod && e.key === "w") {
-        e.preventDefault();
-        closeActiveTab();
-      } else if (e.ctrlKey && e.key === "Tab") {
+      if (e.ctrlKey && e.key === "Tab") {
         e.preventDefault();
         if (tabs.length <= 1) return;
         const idx = tabs.findIndex((t) => t.id === activeTabId);
@@ -472,32 +494,11 @@ function RootLayout() {
         } else {
           setActiveTabId(tabs[(idx + 1) % tabs.length].id);
         }
-      } else if (mod && e.key === "[") {
-        // Ctrl+[ — previous result sub-tab
-        e.preventDefault();
-        const tab = tabs.find((t) => t.id === activeTabId);
-        if (tab?.results && tab.results.length > 1) {
-          updateTab(tab.id, { activeResultIndex: (tab.activeResultIndex - 1 + tab.results.length) % tab.results.length });
-        }
-      } else if (mod && e.key === "]") {
-        // Ctrl+] — next result sub-tab
-        e.preventDefault();
-        const tab = tabs.find((t) => t.id === activeTabId);
-        if (tab?.results && tab.results.length > 1) {
-          updateTab(tab.id, { activeResultIndex: (tab.activeResultIndex + 1) % tab.results.length });
-        }
-      } else if (e.key === "Escape") {
-        if (showCommandPalette) {
-          setShowCommandPalette(false);
-        } else {
-          const tab = tabs.find((t) => t.id === activeTabId);
-          if (tab?.isRunning) cancelActiveQuery();
-        }
       }
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [runActiveQuery, runAllQueries, addTab, closeActiveTab, cancelActiveQuery, tabs, activeTabId, showCommandPalette, updateTab]);
+  }, [tabs, activeTabId]);
 
   const ctxValue: WorkspaceContextValue = {
     activeTab,
@@ -527,6 +528,7 @@ function RootLayout() {
   };
 
   return (
+    <HotkeysProvider>
     <WorkspaceContext.Provider value={ctxValue}>
       <div
         className="flex flex-col h-full w-full overflow-hidden"
@@ -602,6 +604,9 @@ function RootLayout() {
       {/* Command palette */}
       {showCommandPalette && <CommandPalette />}
 
+      {/* Keyboard shortcuts reference */}
+      {showShortcuts && <ShortcutsDialog onClose={() => setShowShortcuts(false)} />}
+
       {/* Danger confirmation dialog */}
       {dangerConfirm && (
         <DangerConfirmDialog
@@ -620,6 +625,7 @@ function RootLayout() {
       {/* TanStack Router child outlet */}
       <Outlet />
     </WorkspaceContext.Provider>
+    </HotkeysProvider>
   );
 }
 
