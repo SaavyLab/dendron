@@ -277,39 +277,68 @@ export const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(
       }
 
       let cancelled = false;
+      let retryTimer: ReturnType<typeof setTimeout>;
 
-      async function loadSchema() {
+      async function loadSchema(attempt = 0) {
         try {
           const connName = connectionName!;
           const schemaNames = await api.schema.getNames(connName);
           if (cancelled) return;
 
+          // Fetch all schemas in parallel
+          const schemaEntries = await Promise.all(
+            schemaNames.map(async (schemaName) => {
+              const tables = await api.schema.getTables(connName, schemaName);
+              if (cancelled) return null;
+
+              // Fetch all tables' columns in parallel
+              const tableEntries = await Promise.all(
+                tables.map(async (table) => {
+                  const columns = await api.schema.getColumns(connName, schemaName, table.name);
+                  return [table.name, columns.map((c) => c.name)] as const;
+                })
+              );
+              if (cancelled) return null;
+
+              return [schemaName, Object.fromEntries(tableEntries)] as const;
+            })
+          );
+          if (cancelled) return;
+
           const schemaMap: Record<string, Record<string, string[]>> = {};
+          for (const entry of schemaEntries) {
+            if (entry) schemaMap[entry[0]] = entry[1];
+          }
 
-          for (const schemaName of schemaNames) {
-            const tables = await api.schema.getTables(connName, schemaName);
-            if (cancelled) return;
-
-            schemaMap[schemaName] = {};
-            for (const table of tables) {
-              const columns = await api.schema.getColumns(connName, schemaName, table.name);
-              if (cancelled) return;
-              schemaMap[schemaName][table.name] = columns.map(c => c.name);
+          // Also add top-level (unqualified) table entries from the default schema
+          // so `SELECT * FROM us|` completes without requiring `public.us|`
+          const defaultSchema = schemaNames[0];
+          if (defaultSchema && schemaMap[defaultSchema]) {
+            for (const [table, cols] of Object.entries(schemaMap[defaultSchema])) {
+              if (!(table in schemaMap)) {
+                schemaMap[table] = cols as unknown as Record<string, string[]>;
+              }
             }
           }
 
           view?.dispatch({
             effects: sqlCompartment.current.reconfigure(
-              sql({ dialect: StandardSQL, schema: schemaMap, defaultSchema: schemaNames[0] })
+              sql({ dialect: StandardSQL, schema: schemaMap, defaultSchema })
             ),
           });
         } catch {
-          // no-op — completions just won't include schema items
+          // Retry up to 3 times with backoff (connection may not be ready yet)
+          if (!cancelled && attempt < 3) {
+            retryTimer = setTimeout(() => loadSchema(attempt + 1), 500 * (attempt + 1));
+          }
         }
       }
 
       loadSchema();
-      return () => { cancelled = true; };
+      return () => {
+        cancelled = true;
+        clearTimeout(retryTimer);
+      };
     }, [connectionName, tabId]);
 
     function insertHistoryQuery(query: string) {
