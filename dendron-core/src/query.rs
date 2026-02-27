@@ -2,7 +2,7 @@
 
 use sqlparser::dialect::{PostgreSqlDialect, SQLiteDialect, GenericDialect};
 use sqlparser::parser::Parser;
-use sqlparser::ast::Statement;
+use sqlparser::ast::{Statement, SetExpr, TableFactor, GroupByExpr};
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum QueryType {
@@ -174,4 +174,120 @@ impl QuerySafetyCheck {
             self.query_type.risk_description()
         )
     }
+}
+
+// ── Editable result detection ──────────────────────────────────────────
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct EditableInfo {
+    pub editable: bool,
+    pub schema: Option<String>,
+    pub table: Option<String>,
+    pub reason: Option<String>,
+}
+
+impl EditableInfo {
+    fn not_editable(reason: &str) -> Self {
+        Self { editable: false, schema: None, table: None, reason: Some(reason.to_string()) }
+    }
+}
+
+/// Analyse a SELECT to determine if its result set maps to a single base table
+/// that can be UPDATEd.  Returns the schema + table if editable.
+pub fn extract_source_table(sql: &str) -> EditableInfo {
+    let dialects: Vec<Box<dyn sqlparser::dialect::Dialect>> = vec![
+        Box::new(PostgreSqlDialect {}),
+        Box::new(SQLiteDialect {}),
+        Box::new(GenericDialect {}),
+    ];
+
+    for dialect in dialects {
+        if let Ok(stmts) = Parser::parse_sql(dialect.as_ref(), sql) {
+            if stmts.len() != 1 {
+                return EditableInfo::not_editable("Multiple statements");
+            }
+            return match &stmts[0] {
+                Statement::Query(q) => check_query_editable(q),
+                _ => EditableInfo::not_editable("Not a SELECT query"),
+            };
+        }
+    }
+
+    EditableInfo::not_editable("Could not parse SQL")
+}
+
+fn check_query_editable(query: &sqlparser::ast::Query) -> EditableInfo {
+    // No CTEs
+    if query.with.is_some() {
+        return EditableInfo::not_editable("Query uses CTEs");
+    }
+
+    // Body must be a plain SELECT (not UNION/INTERSECT/EXCEPT)
+    let select = match query.body.as_ref() {
+        SetExpr::Select(s) => s,
+        _ => return EditableInfo::not_editable("Query uses set operations"),
+    };
+
+    // No DISTINCT
+    if select.distinct.is_some() {
+        return EditableInfo::not_editable("Query uses DISTINCT");
+    }
+
+    // No GROUP BY
+    match &select.group_by {
+        GroupByExpr::Expressions(exprs, _) if !exprs.is_empty() => {
+            return EditableInfo::not_editable("Query uses GROUP BY");
+        }
+        GroupByExpr::All(_) => {
+            return EditableInfo::not_editable("Query uses GROUP BY ALL");
+        }
+        _ => {}
+    }
+
+    // No HAVING
+    if select.having.is_some() {
+        return EditableInfo::not_editable("Query uses HAVING");
+    }
+
+    // Exactly one FROM, no JOINs
+    if select.from.len() != 1 {
+        return EditableInfo::not_editable("Query must have exactly one table in FROM");
+    }
+    let twj = &select.from[0];
+    if !twj.joins.is_empty() {
+        return EditableInfo::not_editable("Query uses JOINs");
+    }
+
+    // Must be a plain table reference (not subquery, function, etc.)
+    let (schema, table) = match &twj.relation {
+        TableFactor::Table { name, args, .. } => {
+            // Table-valued function calls have Some(args)
+            if args.is_some() {
+                return EditableInfo::not_editable("FROM clause is a table-valued function");
+            }
+            let idents = &name.0;
+            match idents.len() {
+                1 => (None, idents[0].value.clone()),
+                2 => (Some(idents[0].value.clone()), idents[1].value.clone()),
+                n if n >= 3 => {
+                    // catalog.schema.table — take last two
+                    (Some(idents[n - 2].value.clone()), idents[n - 1].value.clone())
+                }
+                _ => return EditableInfo::not_editable("Could not parse table name"),
+            }
+        }
+        _ => return EditableInfo::not_editable("FROM clause is not a simple table"),
+    };
+
+    EditableInfo {
+        editable: true,
+        schema,
+        table: Some(table),
+        reason: None,
+    }
+}
+
+/// Quote a SQL identifier, escaping embedded double-quotes.
+pub fn quote_ident(name: &str) -> String {
+    format!("\"{}\"", name.replace('"', "\"\""))
 }

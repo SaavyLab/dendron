@@ -3,8 +3,23 @@
 use tauri::State;
 
 use dendron_core::db::postgres::{QueryResult, DEFAULT_ROW_LIMIT};
-use dendron_core::query::{QuerySafetyCheck, QueryType, analyze_query, has_top_level_order_by};
+use dendron_core::query::{QuerySafetyCheck, QueryType, analyze_query, has_top_level_order_by, extract_source_table};
 use crate::state::AppState;
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub struct EditableInfoResponse {
+    pub editable: bool,
+    pub schema: Option<String>,
+    pub table: Option<String>,
+    pub pk_columns: Vec<String>,
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct PkColumn {
+    pub name: String,
+    pub value: String,
+}
 
 #[tauri::command]
 pub async fn execute_query(
@@ -100,4 +115,115 @@ pub async fn add_to_history(query: String, state: State<'_, AppState>) -> Result
     config.query_history.insert(0, query);
     config.query_history.truncate(100);
     config.save().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn get_editable_info(
+    tab_id: u32,
+    sql: String,
+    state: State<'_, AppState>,
+) -> Result<EditableInfoResponse, String> {
+    let info = extract_source_table(&sql);
+    if !info.editable {
+        return Ok(EditableInfoResponse {
+            editable: false,
+            schema: None,
+            table: None,
+            pk_columns: Vec::new(),
+            reason: info.reason,
+        });
+    }
+
+    // Resolve connection from tab
+    let conn = {
+        let tabs = state.tabs.lock().await;
+        let ctx = tabs.get(&tab_id)
+            .ok_or_else(|| "Tab not found".to_string())?;
+        let conn_name = ctx.connection_name.clone()
+            .ok_or_else(|| "No active connection for this tab".to_string())?;
+        let conns = state.connections.lock().await;
+        let open = conns.get(&conn_name)
+            .ok_or_else(|| format!("Connection '{}' is not open", conn_name))?;
+        open.conn.clone()
+    };
+
+    // Default schema based on connection type
+    let schema = info.schema.unwrap_or_else(|| {
+        if conn.is_postgres() { "public".to_string() } else { "main".to_string() }
+    });
+    let table = info.table.unwrap();
+
+    // Get PK columns from table structure
+    let structure = conn.describe_table(&schema, &table).await
+        .map_err(|e| e.to_string())?;
+    let pk_columns: Vec<String> = structure.columns.iter()
+        .filter(|c| c.is_primary_key)
+        .map(|c| c.name.clone())
+        .collect();
+
+    if pk_columns.is_empty() {
+        return Ok(EditableInfoResponse {
+            editable: false,
+            schema: Some(schema),
+            table: Some(table),
+            pk_columns: Vec::new(),
+            reason: Some("Table has no primary key".to_string()),
+        });
+    }
+
+    Ok(EditableInfoResponse {
+        editable: true,
+        schema: Some(schema),
+        table: Some(table),
+        pk_columns,
+        reason: None,
+    })
+}
+
+#[tauri::command]
+pub async fn update_cell(
+    tab_id: u32,
+    schema: String,
+    table: String,
+    column: String,
+    new_value: Option<String>,
+    pk_columns: Vec<PkColumn>,
+    state: State<'_, AppState>,
+) -> Result<u64, String> {
+    if pk_columns.is_empty() {
+        return Err("No primary key columns provided".to_string());
+    }
+
+    let conn = {
+        let tabs = state.tabs.lock().await;
+        let ctx = tabs.get(&tab_id)
+            .ok_or_else(|| "Tab not found".to_string())?;
+        let conn_name = ctx.connection_name.clone()
+            .ok_or_else(|| "No active connection for this tab".to_string())?;
+        let conns = state.connections.lock().await;
+        let open = conns.get(&conn_name)
+            .ok_or_else(|| format!("Connection '{}' is not open", conn_name))?;
+        open.conn.clone()
+    };
+
+    let pk_pairs: Vec<(String, String)> = pk_columns.into_iter()
+        .map(|pk| (pk.name, pk.value))
+        .collect();
+
+    let affected = conn.update_cell(
+        &schema,
+        &table,
+        &column,
+        new_value.as_deref(),
+        &pk_pairs,
+    ).await.map_err(|e| e.to_string())?;
+
+    if affected == 0 {
+        return Err("No rows were updated — the row may have been modified or deleted".to_string());
+    }
+    if affected > 1 {
+        return Err(format!("Expected 1 row affected, got {affected} — this should not happen with a primary key WHERE clause"));
+    }
+
+    Ok(affected)
 }

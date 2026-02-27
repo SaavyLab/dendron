@@ -27,6 +27,8 @@ pub fn run() {
             check_query_safety,
             get_query_history,
             add_to_history,
+            get_editable_info,
+            update_cell,
             // schema
             get_schema_names,
             get_tables,

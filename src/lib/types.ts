@@ -84,6 +84,19 @@ export interface QuerySafetyCheck {
   warning_message?: string;
 }
 
+export interface EditableInfo {
+  editable: boolean;
+  schema?: string;
+  table?: string;
+  pk_columns: string[];
+  reason?: string;
+}
+
+export interface PkColumn {
+  name: string;
+  value: string;
+}
+
 // Tab state (frontend only)
 export interface Tab {
   id: number;
@@ -93,4 +106,5 @@ export interface Tab {
   result: QueryResult | null;
   error: string | null;
   isRunning: boolean;
+  editableInfo?: EditableInfo | null;
 }

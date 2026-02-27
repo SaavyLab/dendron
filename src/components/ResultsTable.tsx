@@ -7,26 +7,28 @@ import {
   type ColumnSizingState,
 } from "@tanstack/react-table";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import type { QueryResult } from "@/lib/types";
+import type { QueryResult, EditableInfo, PkColumn } from "@/lib/types";
 import { Badge } from "@/components/ui/Badge";
 import { Spinner } from "@/components/ui/Spinner";
 import { Button } from "@/components/ui/Button";
 import { formatMs } from "@/lib/utils";
 import { save } from "@tauri-apps/plugin-dialog";
 import { api } from "@/lib/tauri";
-import { useContextMenu } from "@/components/ui/ContextMenu";
+import { useContextMenu, type ContextMenuItem } from "@/components/ui/ContextMenu";
 
 interface ResultsTableProps {
   result: QueryResult | null;
   error: string | null;
   isRunning: boolean;
   onLoadMore: () => Promise<void>;
+  editableInfo?: EditableInfo | null;
+  tabId: number;
 }
 
 const ROW_HEIGHT = 28;
 const HEADER_HEIGHT = 28;
 
-export function ResultsTable({ result, error, isRunning, onLoadMore }: ResultsTableProps) {
+export function ResultsTable({ result, error, isRunning, onLoadMore, editableInfo, tabId }: ResultsTableProps) {
   if (isRunning) {
     return (
       <div className="flex flex-col h-full overflow-hidden" style={{ background: "var(--bg-surface)" }}>
@@ -99,17 +101,25 @@ export function ResultsTable({ result, error, isRunning, onLoadMore }: ResultsTa
     );
   }
 
-  return <DataTable result={result} onLoadMore={onLoadMore} />;
+  return <DataTable result={result} onLoadMore={onLoadMore} editableInfo={editableInfo} tabId={tabId} />;
 }
 
 function Toolbar({
   result,
   isRunning,
   onLoadMore,
+  pendingEditCount,
+  onCommit,
+  isCommitting,
+  onDiscard,
 }: {
   result?: QueryResult | null;
   isRunning?: boolean;
   onLoadMore?: () => Promise<void>;
+  pendingEditCount?: number;
+  onCommit?: () => void;
+  isCommitting?: boolean;
+  onDiscard?: () => void;
 }) {
   const [loadingMore, setLoadingMore] = useState(false);
 
@@ -177,6 +187,29 @@ function Toolbar({
 
       <div className="flex-1" />
 
+      {(pendingEditCount ?? 0) > 0 && (
+        <div className="flex items-center gap-1">
+          <Button
+            variant="ghost"
+            size="xs"
+            onClick={onDiscard}
+            title="Discard all pending edits"
+          >
+            Discard
+          </Button>
+          <Button
+            variant="ghost"
+            size="xs"
+            onClick={onCommit}
+            disabled={isCommitting}
+            title="Commit all pending edits to the database"
+            style={{ color: "var(--success)" }}
+          >
+            {isCommitting ? "Committing…" : `Commit (${pendingEditCount})`}
+          </Button>
+        </div>
+      )}
+
       {result?.truncated && (
         <Button
           variant="ghost"
@@ -211,11 +244,161 @@ interface SelectedCell {
   value: string;
 }
 
-function DataTable({ result, onLoadMore }: { result: QueryResult; onLoadMore?: () => Promise<void> }) {
+interface EditingCell {
+  rowIdx: number;
+  colIdx: number;
+  originalValue: string;
+}
+
+function DataTable({
+  result,
+  onLoadMore,
+  editableInfo,
+  tabId,
+}: {
+  result: QueryResult;
+  onLoadMore?: () => Promise<void>;
+  editableInfo?: EditableInfo | null;
+  tabId: number;
+}) {
   const parentRef = useRef<HTMLDivElement>(null);
   const [selectedCell, setSelectedCell] = useState<SelectedCell | null>(null);
   const [selectedRow, setSelectedRow] = useState<number | null>(null);
   const { showContextMenu, contextMenuElement } = useContextMenu();
+
+  // Editing state
+  const [editingCell, setEditingCell] = useState<EditingCell | null>(null);
+  const [editValue, setEditValue] = useState("");
+  const [editError, setEditError] = useState<string | null>(null);
+  // Pending edits: staged locally but not yet committed to DB
+  // Key: "rowIdx-colIdx", Value: new display value
+  const [pendingEdits, setPendingEdits] = useState<Record<string, string>>({});
+  // Committed edits: already flushed to the DB
+  const [committedEdits, setCommittedEdits] = useState<Record<string, string>>({});
+  const [isCommitting, setIsCommitting] = useState(false);
+
+  // Combined local edits overlay (committed first, pending overrides)
+  const localEdits = { ...committedEdits, ...pendingEdits };
+  const pendingEditCount = Object.keys(pendingEdits).length;
+
+  // Check if all PK columns are present in the result set
+  const canEdit = editableInfo?.editable && editableInfo.pk_columns.every(
+    (pk) => result.columns.includes(pk)
+  );
+
+  // Clear all edits when result changes
+  useEffect(() => {
+    setPendingEdits({});
+    setCommittedEdits({});
+    setEditingCell(null);
+    setEditError(null);
+  }, [result]);
+
+  function startEditing(rowIdx: number, colIdx: number) {
+    if (!canEdit) return;
+    const editKey = `${rowIdx}-${colIdx}`;
+    const currentValue = localEdits[editKey] ?? result.rows[rowIdx][colIdx] ?? "NULL";
+    setEditingCell({ rowIdx, colIdx, originalValue: currentValue });
+    setEditValue(currentValue === "NULL" ? "" : currentValue);
+    setEditError(null);
+    setSelectedCell(null);
+  }
+
+  function stageEdit() {
+    if (!editingCell) return;
+
+    const { rowIdx, colIdx, originalValue } = editingCell;
+    const newValue = editValue;
+
+    // No change? Just cancel.
+    if (newValue === originalValue || (originalValue === "NULL" && newValue === "")) {
+      cancelEdit();
+      return;
+    }
+
+    const editKey = `${rowIdx}-${colIdx}`;
+    setPendingEdits((prev) => ({
+      ...prev,
+      [editKey]: newValue || "NULL",
+    }));
+    setEditingCell(null);
+    setEditError(null);
+  }
+
+  function stageNullCell(rowIdx: number, colIdx: number) {
+    if (!canEdit) return;
+    const editKey = `${rowIdx}-${colIdx}`;
+    setPendingEdits((prev) => ({ ...prev, [editKey]: "NULL" }));
+  }
+
+  async function commitAllEdits() {
+    if (!editableInfo?.editable || isCommitting || pendingEditCount === 0) return;
+
+    setIsCommitting(true);
+    setEditError(null);
+
+    const entries = Object.entries(pendingEdits);
+    const errors: string[] = [];
+
+    for (const [editKey, newDisplayValue] of entries) {
+      const [rowStr, colStr] = editKey.split("-");
+      const rowIdx = parseInt(rowStr, 10);
+      const colIdx = parseInt(colStr, 10);
+
+      const row = result.rows[rowIdx];
+      const pkValues: PkColumn[] = editableInfo.pk_columns.map((pkCol) => {
+        const pkIdx = result.columns.indexOf(pkCol);
+        return { name: pkCol, value: row[pkIdx] };
+      });
+
+      const nullPk = pkValues.find((pk) => pk.value === "NULL");
+      if (nullPk) {
+        errors.push(`Row ${rowIdx + 1}: PK "${nullPk.name}" is NULL`);
+        continue;
+      }
+
+      const serverValue = newDisplayValue === "NULL" ? null : newDisplayValue;
+
+      try {
+        await api.queries.updateCell(
+          tabId,
+          editableInfo.schema ?? "public",
+          editableInfo.table!,
+          result.columns[colIdx],
+          serverValue,
+          pkValues,
+        );
+        // Move from pending to committed
+        setCommittedEdits((prev) => ({ ...prev, [editKey]: newDisplayValue }));
+        setPendingEdits((prev) => {
+          const next = { ...prev };
+          delete next[editKey];
+          return next;
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        errors.push(`Row ${rowIdx + 1}, ${result.columns[colIdx]}: ${msg}`);
+      }
+    }
+
+    setIsCommitting(false);
+
+    if (errors.length > 0) {
+      setEditError(errors.join("\n"));
+    }
+  }
+
+  function discardPendingEdits() {
+    setPendingEdits({});
+    setEditingCell(null);
+    setEditError(null);
+  }
+
+  function cancelEdit() {
+    setEditingCell(null);
+    setEditValue("");
+    setEditError(null);
+  }
 
   const columns = useMemo<ColumnDef<string[]>[]>(
     () => [
@@ -302,7 +485,37 @@ function DataTable({ result, onLoadMore }: { result: QueryResult; onLoadMore?: (
 
   return (
     <div className="flex flex-col h-full overflow-hidden" style={{ background: "var(--bg-surface)" }}>
-      <Toolbar result={result} onLoadMore={onLoadMore} />
+      <Toolbar
+        result={result}
+        onLoadMore={onLoadMore}
+        pendingEditCount={pendingEditCount}
+        onCommit={commitAllEdits}
+        isCommitting={isCommitting}
+        onDiscard={discardPendingEdits}
+      />
+
+      {/* Commit error banner */}
+      {editError && (
+        <div
+          className="flex items-center gap-2 px-3 py-1.5 border-b"
+          style={{
+            fontSize: "11px",
+            fontFamily: "var(--font-mono)",
+            color: "var(--error)",
+            background: "rgba(248,113,113,0.06)",
+            borderColor: "rgba(248,113,113,0.15)",
+            whiteSpace: "pre-wrap",
+          }}
+        >
+          <span className="flex-1">{editError}</span>
+          <button
+            onClick={() => setEditError(null)}
+            style={{ color: "var(--text-muted)", fontSize: "14px", lineHeight: 1, padding: "0 4px" }}
+          >
+            ×
+          </button>
+        </div>
+      )}
 
       {/* Scrollable area */}
       <div
@@ -458,6 +671,60 @@ function DataTable({ result, onLoadMore }: { result: QueryResult; onLoadMore?: (
                   const isCellSelected =
                     selectedCell?.rowIdx === virtualRow.index &&
                     selectedCell?.colIdx === colIdx;
+                  const isEditing =
+                    editingCell?.rowIdx === virtualRow.index &&
+                    editingCell?.colIdx === colIdx;
+                  const editKey = `${virtualRow.index}-${colIdx}`;
+                  const isPending = editKey in pendingEdits;
+                  const isCommitted = editKey in committedEdits;
+                  const hasLocalEdit = isPending || isCommitted;
+                  const displayValue = localEdits[editKey] ?? result.rows[virtualRow.index][colIdx] ?? "NULL";
+
+                  if (isEditing) {
+                    return (
+                      <div
+                        key={cell.id}
+                        className="flex items-center border-r shrink-0"
+                        style={{
+                          width: `${cell.column.getSize()}px`,
+                          borderColor: "var(--border-subtle)",
+                          background: "rgba(96,165,250,0.12)",
+                          outline: "2px solid var(--accent)",
+                          outlineOffset: "-2px",
+                          position: "relative",
+                        }}
+                      >
+                        <input
+                          autoFocus
+                          value={editValue}
+                          onChange={(e) => setEditValue(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                              e.preventDefault();
+                              stageEdit();
+                            } else if (e.key === "Escape") {
+                              e.preventDefault();
+                              cancelEdit();
+                            }
+                            e.stopPropagation();
+                          }}
+                          onBlur={() => cancelEdit()}
+                          style={{
+                            width: "100%",
+                            height: "100%",
+                            padding: "0 8px",
+                            fontFamily: "var(--font-mono)",
+                            fontSize: "12px",
+                            color: "var(--text-primary)",
+                            background: "transparent",
+                            border: "none",
+                            outline: "none",
+                          }}
+                        />
+                      </div>
+                    );
+                  }
+
                   return (
                     <div
                       key={cell.id}
@@ -477,6 +744,11 @@ function DataTable({ result, onLoadMore }: { result: QueryResult; onLoadMore?: (
                           : isRowSelected
                           ? "rgba(96,165,250,0.07)"
                           : undefined,
+                        ...(isPending
+                          ? { borderLeft: "2px solid var(--warning, #f59e0b)" }
+                          : isCommitted
+                          ? { borderLeft: "2px solid var(--success)" }
+                          : {}),
                       }}
                       onClick={() => {
                         setSelectedCell({
@@ -484,14 +756,15 @@ function DataTable({ result, onLoadMore }: { result: QueryResult; onLoadMore?: (
                           colIdx,
                           col: result.columns[colIdx],
                           type: result.column_types[colIdx] ?? "",
-                          value: result.rows[virtualRow.index][colIdx] ?? "NULL",
+                          value: displayValue,
                         });
                         setSelectedRow(null);
                       }}
+                      onDoubleClick={() => startEditing(virtualRow.index, colIdx)}
                       onContextMenu={(e) => {
                         const rowData = result.rows[virtualRow.index];
-                        const cellValue = rowData[colIdx] ?? "NULL";
-                        showContextMenu(e, [
+                        const cellValue = displayValue;
+                        const items: ContextMenuItem[] = [
                           { label: "Copy cell", onClick: () => navigator.clipboard.writeText(cellValue === "NULL" ? "" : cellValue) },
                           {
                             label: "Copy row as JSON",
@@ -509,10 +782,23 @@ function DataTable({ result, onLoadMore }: { result: QueryResult; onLoadMore?: (
                               navigator.clipboard.writeText(insert);
                             },
                           },
-                        ]);
+                        ];
+                        if (canEdit) {
+                          items.push(
+                            { label: "Edit cell", separator: true, onClick: () => startEditing(virtualRow.index, colIdx) },
+                            { label: "Set to NULL", separator: false, onClick: () => stageNullCell(virtualRow.index, colIdx) },
+                          );
+                        }
+                        showContextMenu(e, items);
                       }}
                     >
-                      {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                      {hasLocalEdit ? (
+                        displayValue === "NULL" ? (
+                          <span style={{ color: "var(--text-muted)", fontStyle: "italic", fontFamily: "var(--font-mono)" }}>NULL</span>
+                        ) : displayValue
+                      ) : (
+                        flexRender(cell.column.columnDef.cell, cell.getContext())
+                      )}
                     </div>
                   );
                 })}
@@ -523,7 +809,17 @@ function DataTable({ result, onLoadMore }: { result: QueryResult; onLoadMore?: (
       </div>
 
       {selectedCell && (
-        <CellDetailPanel cell={selectedCell} onClose={() => setSelectedCell(null)} />
+        <CellDetailPanel
+          cell={selectedCell}
+          onClose={() => setSelectedCell(null)}
+          canEdit={!!canEdit}
+          onStageEdit={(newValue) => {
+            const editKey = `${selectedCell.rowIdx}-${selectedCell.colIdx}`;
+            setPendingEdits((prev) => ({ ...prev, [editKey]: newValue }));
+            // Update the selected cell's displayed value to reflect the staged edit
+            setSelectedCell((prev) => prev ? { ...prev, value: newValue } : null);
+          }}
+        />
       )}
 
       {contextMenuElement}
@@ -573,19 +869,37 @@ function highlightJson(text: string) {
 function CellDetailPanel({
   cell,
   onClose,
+  canEdit,
+  onStageEdit,
 }: {
   cell: SelectedCell;
   onClose: () => void;
+  canEdit: boolean;
+  onStageEdit: (value: string) => void;
 }) {
   const [height, setHeight] = useState(200);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+
+  // Reset editing state when the selected cell changes
+  useEffect(() => {
+    setEditing(false);
+    setDraft("");
+  }, [cell.rowIdx, cell.colIdx]);
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") {
+        if (editing) {
+          setEditing(false);
+        } else {
+          onClose();
+        }
+      }
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  }, [onClose, editing]);
 
   function startResize(e: { preventDefault(): void; clientY: number }) {
     e.preventDefault();
@@ -620,6 +934,38 @@ function CellDetailPanel({
   async function copy() {
     await navigator.clipboard.writeText(isNull ? "" : cell.value);
   }
+
+  function enterEditMode() {
+    setDraft(isNull ? "" : cell.value);
+    setEditing(true);
+  }
+
+  function stageFromPanel() {
+    const newValue = draft || "NULL";
+    if (newValue !== cell.value) {
+      onStageEdit(newValue);
+    }
+    setEditing(false);
+  }
+
+  function formatJson() {
+    try {
+      setDraft(JSON.stringify(JSON.parse(draft), null, 2));
+    } catch {
+      // not valid JSON, leave as-is
+    }
+  }
+
+  const headerButtonStyle = {
+    fontFamily: "var(--font-mono)" as const,
+    fontSize: "11px",
+    color: "var(--text-muted)",
+    padding: "2px 6px",
+    borderRadius: "3px",
+    border: "none",
+    background: "none",
+    cursor: "pointer" as const,
+  };
 
   return (
     <div
@@ -666,58 +1012,131 @@ function CellDetailPanel({
           </span>
         )}
         <div style={{ flex: 1 }} />
-        <button
-          onClick={copy}
-          style={{
-            fontFamily: "var(--font-mono)",
-            fontSize: "11px",
-            color: "var(--text-muted)",
-            padding: "2px 6px",
-            borderRadius: "3px",
-          }}
-          onMouseEnter={(e) =>
-            ((e.currentTarget as HTMLButtonElement).style.color = "var(--text-primary)")
-          }
-          onMouseLeave={(e) =>
-            ((e.currentTarget as HTMLButtonElement).style.color = "var(--text-muted)")
-          }
-        >
-          Copy
-        </button>
-        <button
-          onClick={onClose}
-          style={{
-            fontSize: "16px",
-            color: "var(--text-muted)",
-            padding: "0 4px",
-            lineHeight: 1,
-          }}
-          onMouseEnter={(e) =>
-            ((e.currentTarget as HTMLButtonElement).style.color = "var(--text-primary)")
-          }
-          onMouseLeave={(e) =>
-            ((e.currentTarget as HTMLButtonElement).style.color = "var(--text-muted)")
-          }
-        >
-          ×
-        </button>
+
+        {editing ? (
+          <>
+            {isJson && (
+              <button
+                onClick={formatJson}
+                style={headerButtonStyle}
+                onMouseEnter={(e) => ((e.currentTarget as HTMLButtonElement).style.color = "var(--text-primary)")}
+                onMouseLeave={(e) => ((e.currentTarget as HTMLButtonElement).style.color = "var(--text-muted)")}
+              >
+                Format
+              </button>
+            )}
+            <button
+              onClick={() => { setDraft(""); stageFromPanel(); }}
+              style={{ ...headerButtonStyle, color: "var(--text-muted)" }}
+              title="Set value to NULL"
+              onMouseEnter={(e) => ((e.currentTarget as HTMLButtonElement).style.color = "var(--error)")}
+              onMouseLeave={(e) => ((e.currentTarget as HTMLButtonElement).style.color = "var(--text-muted)")}
+            >
+              NULL
+            </button>
+            <button
+              onClick={() => setEditing(false)}
+              style={headerButtonStyle}
+              onMouseEnter={(e) => ((e.currentTarget as HTMLButtonElement).style.color = "var(--text-primary)")}
+              onMouseLeave={(e) => ((e.currentTarget as HTMLButtonElement).style.color = "var(--text-muted)")}
+            >
+              Cancel
+            </button>
+            <button
+              onClick={stageFromPanel}
+              style={{ ...headerButtonStyle, color: "var(--success)" }}
+              onMouseEnter={(e) => ((e.currentTarget as HTMLButtonElement).style.opacity = "0.8")}
+              onMouseLeave={(e) => ((e.currentTarget as HTMLButtonElement).style.opacity = "1")}
+            >
+              Stage
+            </button>
+          </>
+        ) : (
+          <>
+            <button
+              onClick={copy}
+              style={headerButtonStyle}
+              onMouseEnter={(e) => ((e.currentTarget as HTMLButtonElement).style.color = "var(--text-primary)")}
+              onMouseLeave={(e) => ((e.currentTarget as HTMLButtonElement).style.color = "var(--text-muted)")}
+            >
+              Copy
+            </button>
+            {canEdit && (
+              <button
+                onClick={enterEditMode}
+                style={headerButtonStyle}
+                onMouseEnter={(e) => ((e.currentTarget as HTMLButtonElement).style.color = "var(--text-primary)")}
+                onMouseLeave={(e) => ((e.currentTarget as HTMLButtonElement).style.color = "var(--text-muted)")}
+              >
+                Edit
+              </button>
+            )}
+            <button
+              onClick={onClose}
+              style={{
+                fontSize: "16px",
+                color: "var(--text-muted)",
+                padding: "0 4px",
+                lineHeight: 1,
+                border: "none",
+                background: "none",
+                cursor: "pointer",
+              }}
+              onMouseEnter={(e) => ((e.currentTarget as HTMLButtonElement).style.color = "var(--text-primary)")}
+              onMouseLeave={(e) => ((e.currentTarget as HTMLButtonElement).style.color = "var(--text-muted)")}
+            >
+              ×
+            </button>
+          </>
+        )}
       </div>
 
-      {/* Value */}
-      <div
-        className="flex-1 overflow-auto px-2 py-1.5 selectable"
-        style={{
-          fontFamily: "var(--font-mono)",
-          fontSize: "12px",
-          lineHeight: 1.6,
-          whiteSpace: "pre-wrap",
-          wordBreak: "break-all",
-          color: isNull ? "var(--text-muted)" : "var(--text-primary)",
-          fontStyle: isNull ? "italic" : "normal",
-        }}
-      >
-        {isNull ? "NULL" : isJson ? highlightJson(cell.value) : cell.value}
-      </div>
+      {/* Content area */}
+      {editing ? (
+        <textarea
+          autoFocus
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            // Cmd/Ctrl+Enter to stage
+            if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+              e.preventDefault();
+              stageFromPanel();
+            }
+            e.stopPropagation();
+          }}
+          className="flex-1 px-2 py-1.5"
+          style={{
+            fontFamily: "var(--font-mono)",
+            fontSize: "12px",
+            lineHeight: 1.6,
+            color: "var(--text-primary)",
+            background: "transparent",
+            border: "none",
+            outline: "none",
+            resize: "none",
+            whiteSpace: "pre",
+            overflowWrap: "normal",
+            overflowX: "auto",
+            overflowY: "auto",
+          }}
+        />
+      ) : (
+        <div
+          className="flex-1 overflow-auto px-2 py-1.5 selectable"
+          style={{
+            fontFamily: "var(--font-mono)",
+            fontSize: "12px",
+            lineHeight: 1.6,
+            whiteSpace: "pre-wrap",
+            wordBreak: "break-all",
+            color: isNull ? "var(--text-muted)" : "var(--text-primary)",
+            fontStyle: isNull ? "italic" : "normal",
+          }}
+        >
+          {isNull ? "NULL" : isJson ? highlightJson(cell.value) : cell.value}
+        </div>
+      )}
     </div>
   );
 }

@@ -9,6 +9,8 @@ import type {
   TableRow,
   TableStructure,
   Settings,
+  EditableInfo,
+  PkColumn,
 } from "./types";
 
 export const api = {
@@ -49,6 +51,18 @@ export const api = {
     getHistory: () => invoke<string[]>("get_query_history"),
 
     addHistory: (query: string) => invoke<void>("add_to_history", { query }),
+
+    getEditableInfo: (tabId: number, sql: string) =>
+      invoke<EditableInfo>("get_editable_info", { tabId, sql }),
+
+    updateCell: (
+      tabId: number,
+      schema: string,
+      table: string,
+      column: string,
+      newValue: string | null,
+      pkColumns: PkColumn[],
+    ) => invoke<number>("update_cell", { tabId, schema, table, column, newValue, pkColumns }),
   },
 
   schema: {

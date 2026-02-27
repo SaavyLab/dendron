@@ -3,7 +3,7 @@ import { createRootRoute, Outlet } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { Group as PanelGroup, Panel, Separator as PanelResizeHandle } from "react-resizable-panels";
 import { WorkspaceContext, type WorkspaceContextValue } from "@/lib/WorkspaceContext";
-import type { Tab } from "@/lib/types";
+import type { Tab, EditableInfo } from "@/lib/types";
 import { api } from "@/lib/tauri";
 import { TabBar } from "@/components/TabBar";
 import { ConnectionSidebar } from "@/components/ConnectionSidebar";
@@ -121,12 +121,16 @@ function RootLayout() {
       // If safety check fails, proceed anyway
     }
 
-    updateTab(tab.id, { isRunning: true, error: null, result: null });
+    updateTab(tab.id, { isRunning: true, error: null, result: null, editableInfo: null });
 
     try {
       const result = await api.queries.execute(tab.id, sqlToRun);
       await api.queries.addHistory(sqlToRun).catch(() => {});
-      updateTab(tab.id, { result, isRunning: false });
+      let editableInfo: EditableInfo | null = null;
+      if (result.columns.length > 0) {
+        try { editableInfo = await api.queries.getEditableInfo(tab.id, sqlToRun); } catch {}
+      }
+      updateTab(tab.id, { result, isRunning: false, editableInfo });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       updateTab(tab.id, { error: msg, isRunning: false });
@@ -164,21 +168,27 @@ function RootLayout() {
       // If safety check fails, proceed anyway
     }
 
-    updateTab(tab.id, { isRunning: true, error: null, result: null });
+    updateTab(tab.id, { isRunning: true, error: null, result: null, editableInfo: null });
 
     try {
       let lastResult = null;
+      let lastSelectSql: string | null = null;
       for (const stmt of statements) {
         const result = await api.queries.execute(tab.id, stmt.text);
         // Prefer the last SELECT result; fall back to the last DML result
         if (result.columns.length > 0) {
           lastResult = result;
+          lastSelectSql = stmt.text;
         } else if (!lastResult || lastResult.columns.length === 0) {
           lastResult = result;
         }
       }
       await api.queries.addHistory(tab.sql).catch(() => {});
-      updateTab(tab.id, { result: lastResult, isRunning: false });
+      let editableInfo: EditableInfo | null = null;
+      if (lastSelectSql && lastResult && lastResult.columns.length > 0) {
+        try { editableInfo = await api.queries.getEditableInfo(tab.id, lastSelectSql); } catch {}
+      }
+      updateTab(tab.id, { result: lastResult, isRunning: false, editableInfo });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       updateTab(tab.id, { error: msg, isRunning: false });
@@ -364,6 +374,8 @@ function RootLayout() {
                     error={activeTab.error}
                     isRunning={activeTab.isRunning}
                     onLoadMore={loadMoreQuery}
+                    editableInfo={activeTab.editableInfo}
+                    tabId={activeTab.id}
                   />
                 </Panel>
               </PanelGroup>
